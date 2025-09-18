@@ -1,15 +1,9 @@
-/** content.js — FOSXpress v3.6.0
- * UI + teclado + preview con Copiar + autoinsert + persistencia + accesibilidad
- * + fill por etiqueta + cleanup espacios + trap afinado + highlight en preview
- * + manejo robusto de chrome.storage + silenciamiento selectivo del contexto invalidado
- * + sin 'unload' (usa pagehide/visibilitychange)
- * + {{date+N}}, atajos case-insensitive y typeahead de atajos
- * + FIX v3.5.1: selección por click en typeahead
- * + FIX v3.5.2: estabilidad de listeners (SPA/bfcache)
- * + FIX v3.5.3: sincronización con frameworks (beforeinput/input/change) y bloqueo de cierre por click fuera
- * + NEW v3.6.0: soporte para snippets de MAIL {subject, body} con Gmail/Outlook (retrocompatible)
+/** content.js — FOSXpress v3.6.3
+ *  - Todo lo existente (atajos, diálogo, mail, typeahead, estabilidad SPA)
+ *  - Detección de "Nombre del challenge" -> envío a background (no usa storage directo)
+ *  - Regex afinado para evitar que se pegue con "fecha"
  */
-console.log("[FOSXpress] content script v3.6.0 loaded");
+console.log("[FOSXpress] content script v3.6.3 loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -827,3 +821,116 @@ window.addEventListener("pageshow", () => {
 window.addEventListener("popstate", attachCoreListeners);
 window.addEventListener("hashchange", attachCoreListeners);
 window.addEventListener("focus", attachCoreListeners);
+
+/* ===================================================================== */
+/* ============ NUEVO: detección de "Nombre del challenge" ==============*/
+/* ===================================================================== */
+
+// Regex afinado: backoffice_* seguido de fin de string, espacio o carácter no-palabra.
+// Evita que se pegue con "fecha".
+const RE_CHALLENGE = /\b(backoffice_[a-z0-9_]+)(?=$|\s|[^\w])/i;
+
+// Sanitización de emergencia (por si la UI concatena "fecha" sin espacio)
+function cleanChallengeToken(val){
+  if (!val) return val;
+  return String(val).trim().replace(/fecha$/i, '');
+}
+
+// Publicar valor: enviar al background (que persiste en storage)
+function publishDetectedChallenge(value){
+  const v = value ? String(value).toLowerCase() : null;
+  try {
+    chrome.runtime?.sendMessage?.({ type: "maf:set_challenge", value: v });
+    console.log("[Mafalda] challenge detectado:", v);
+  } catch(e){
+    console.warn("[Mafalda] no pude enviar a background:", e);
+  }
+}
+
+let mafChallengeObserver = null;
+let mafScanTimer = null;
+let mafCurrentChallenge = null;
+
+function findLabelNode() {
+  // Buscamos nodos típicos de texto que contengan "Nombre del challenge" (ES) o "Challenge name" (EN)
+  const nodes = document.querySelectorAll("span,div,p,strong,h1,h2,h3,label");
+  for (const el of nodes) {
+    const t = el.textContent || "";
+    if (t && /nombre\s+del\s+challenge|challenge\s*name/i.test(t)) return el;
+  }
+  return null;
+}
+
+function extractFromNode(el) {
+  if (!el) return null;
+
+  // Mismo nodo (e.g. "Nombre del challenge: backoffice_proof...")
+  let m = (el.textContent || "").match(RE_CHALLENGE);
+  if (m) return cleanChallengeToken(m[1]);
+
+  // Enfático en <strong>/<b>
+  const bold = el.querySelector("strong,b");
+  if (bold) {
+    m = (bold.textContent || "").match(RE_CHALLENGE);
+    if (m) return cleanChallengeToken(m[1]);
+  }
+
+  // Hermano siguiente (label: valor)
+  let sib = el.nextElementSibling;
+  for (let i = 0; i < 3 && sib; i++, sib = sib.nextElementSibling) {
+    m = (sib.textContent || "").match(RE_CHALLENGE);
+    if (m) return cleanChallengeToken(m[1]);
+  }
+
+  // Contenedor cercano
+  const box = el.closest(".challenge-infos, .challenge-main-infos, section, article, div") || el;
+  m = (box.innerText || "").match(RE_CHALLENGE);
+  if (m) return cleanChallengeToken(m[1]);
+
+  return null;
+}
+
+function fallbackScan() {
+  // Primer "backoffice_*" que se encuentre en el body
+  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+  while (tw.nextNode()) {
+    const t = tw.currentNode.nodeValue;
+    const m = t && t.match(RE_CHALLENGE);
+    if (m) return cleanChallengeToken(m[1]);
+  }
+  return null;
+}
+
+function findChallengeOnce(){
+  const labelEl = findLabelNode();
+  return extractFromNode(labelEl) || fallbackScan();
+}
+
+function updateChallenge(){
+  try{
+    const found = findChallengeOnce();
+    if (found && found !== mafCurrentChallenge){
+      mafCurrentChallenge = found.toLowerCase();
+      publishDetectedChallenge(mafCurrentChallenge);
+    }
+  }catch(_){}
+}
+
+function ensureChallengeObserver(){
+  if (mafChallengeObserver) return;
+  updateChallenge();
+  mafChallengeObserver = new MutationObserver(() => {
+    clearTimeout(mafScanTimer);
+    mafScanTimer = setTimeout(updateChallenge, 200);
+  });
+  mafChallengeObserver.observe(document.documentElement, {
+    subtree:true, childList:true, characterData:true
+  });
+  window.addEventListener("hashchange", updateChallenge);
+  window.addEventListener("popstate", updateChallenge);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") updateChallenge();
+  });
+}
+
+ensureChallengeObserver();
