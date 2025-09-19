@@ -1,9 +1,16 @@
-/** content.js — FOSXpress v3.6.3
- *  - Todo lo existente (atajos, diálogo, mail, typeahead, estabilidad SPA)
- *  - Detección de "Nombre del challenge" -> envío a background (no usa storage directo)
- *  - Regex afinado para evitar que se pegue con "fecha"
+/** content.js — FOSXpress v3.6.0 + detección CDU/SITE
+ * UI + teclado + preview con Copiar + autoinsert + persistencia + accesibilidad
+ * + fill por etiqueta + cleanup espacios + trap afinado + highlight en preview
+ * + manejo robusto de chrome.storage + silenciamiento selectivo del contexto invalidado
+ * + sin 'unload' (usa pagehide/visibilitychange)
+ * + {{date+N}}, atajos case-insensitive y typeahead de atajos
+ * + FIX v3.5.1: selección por click en typeahead
+ * + FIX v3.5.2: estabilidad de listeners (SPA/bfcache)
+ * + FIX v3.5.3: sincronización con frameworks (beforeinput/input/change) y bloqueo de cierre por click fuera
+ * + NEW v3.6.0: soporte para snippets de MAIL {subject, body} con Gmail/Outlook (retrocompatible)
+ * + NEW: detección de CDU (challenge) y SITE (país) desde el DOM y publicación al background
  */
-console.log("[FOSXpress] content script v3.6.3 loaded");
+console.log("[FOSXpress] content script v3.6.0 + CDU/SITE loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -183,7 +190,7 @@ function insertAtInput(ctx, finalText){
   const before=ctx.original.slice(0,ctx.from), after=ctx.original.slice(ctx.to)+ctx.right;
   ctx.el.value = before + finalText + after;
   const caret=(before+finalText).length; ctx.el.setSelectionRange(caret,caret);
-  emitInputLike(ctx.el);                                    // <-- sync React/SPA
+  emitInputLike(ctx.el);
 }
 
 function findShortcutInEditable(){
@@ -228,8 +235,7 @@ function insertAtEditable(ctx, finalText){
   const r=document.createRange();
   r.setStart(tn,finalText.length); r.setEnd(tn,finalText.length);
   ctx.sel.addRange(r);
-
-  const root = getEditableRootFromNode(tn);               // <-- sync contentEditable
+  const root = getEditableRootFromNode(tn);
   emitInputLike(root);
 }
 
@@ -823,7 +829,7 @@ window.addEventListener("hashchange", attachCoreListeners);
 window.addEventListener("focus", attachCoreListeners);
 
 /* ===================================================================== */
-/* ============ NUEVO: detección de "Nombre del challenge" ==============*/
+/* =================== Detección de "Nombre del challenge" ==============*/
 /* ===================================================================== */
 
 // Regex afinado: backoffice_* seguido de fin de string, espacio o carácter no-palabra.
@@ -934,3 +940,70 @@ function ensureChallengeObserver(){
 }
 
 ensureChallengeObserver();
+
+/* ===================================================================== */
+/* =================== Detección de SITE (país: MLA/MLB/…) ==============*/
+/* ===================================================================== */
+
+const RE_SITE = /\b(MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/;
+
+function publishDetectedSite(value){
+  const v = value ? String(value).toUpperCase() : null;
+  try {
+    chrome.runtime?.sendMessage?.({ type: "maf:set_site", value: v });
+    console.log("[Mafalda] site detectado:", v);
+  } catch(e){
+    console.warn("[Mafalda] no pude enviar site a background:", e);
+  }
+}
+
+let mafSiteObserver = null;
+let mafSiteScanTimer = null;
+let mafCurrentSite = null;
+
+function findSiteOnce(){
+  // Buscamos en encabezados/títulos/zona de cabecera
+  const nodes = document.querySelectorAll("h1,h2,h3,.page-title,.header,header,nav,div,span,strong");
+  for (const el of nodes) {
+    const txt = el.textContent || "";
+    const m = txt.match(RE_SITE);
+    if (m) return m[1];
+  }
+  // Fallback: primer texto del documento que matchee
+  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+  while (tw.nextNode()) {
+    const t = tw.currentNode.nodeValue || "";
+    const m = t.match(RE_SITE);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function updateSite(){
+  try{
+    const found = findSiteOnce();
+    if (found && found !== mafCurrentSite){
+      mafCurrentSite = found;
+      publishDetectedSite(mafCurrentSite);
+    }
+  }catch(_){}
+}
+
+function ensureSiteObserver(){
+  if (mafSiteObserver) return;
+  updateSite();
+  mafSiteObserver = new MutationObserver(() => {
+    clearTimeout(mafSiteScanTimer);
+    mafSiteScanTimer = setTimeout(updateSite, 200);
+  });
+  mafSiteObserver.observe(document.documentElement, {
+    subtree:true, childList:true, characterData:true
+  });
+  window.addEventListener("hashchange", updateSite);
+  window.addEventListener("popstate", updateSite);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") updateSite();
+  });
+}
+
+ensureSiteObserver();

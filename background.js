@@ -1,53 +1,46 @@
-// background.js — recibe el CDU desde el content script y lo persiste
-// Funciona en MV3 (service worker). Guarda en storage.session y
-// si no está disponible, cae a storage.local.
-
+// Mantiene la extensión activa y lista + persiste CDU/SITE
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("Mafalda instalada y lista ✅");
+  console.log("Completa textos instalada y lista.");
 });
 
-/**
- * Guarda el challenge en storage.session (si existe) y si falla,
- * hace fallback a storage.local. Responde al remitente con el área usada.
- */
-function saveChallenge(value, sendResponse) {
-  const data = { maf_challenge: value || null };
+// Guarda la clave pedida en storage.session, con fallback a storage.local
+function saveKey(key, value, sendResponse) {
+  const data = { [key]: value ?? null };
 
-  // Preferimos session (por pestaña/sesión de navegador)
   if (chrome.storage.session && chrome.storage.session.set) {
     chrome.storage.session.set(data, () => {
       if (chrome.runtime.lastError) {
-        console.warn("[BG] session.set falló:", chrome.runtime.lastError.message);
-        chrome.storage.local.set(data, () => {
-          sendResponse({ ok: true, area: "local", value });
-        });
+        console.warn(`[BG] session.set falló (${key}):`, chrome.runtime.lastError.message);
+        chrome.storage.local.set(data, () => sendResponse?.({ ok: true, area: "local", key, value }));
       } else {
-        sendResponse({ ok: true, area: "session", value });
+        sendResponse?.({ ok: true, area: "session", key, value });
       }
     });
   } else {
-    // Fallback directo a local si session no está disponible
     chrome.storage.local.set(data, () => {
-      sendResponse({ ok: true, area: "local", value });
+      sendResponse?.({ ok: true, area: "local", key, value });
     });
   }
 }
 
-/**
- * Mensajería desde content.js:
- *  - type: "maf:set_challenge"
- *  - value: string | null (p.ej. "backoffice_proof_of_life_mismatch")
- */
+// Recibe desde content.js valores detectados y los persiste
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   try {
-    if (msg && msg.type === "maf:set_challenge") {
+    if (!msg || !msg.type) return;
+
+    if (msg.type === "maf:set_challenge") {
       const v = msg.value ? String(msg.value).toLowerCase() : null;
-      saveChallenge(v, sendResponse);
-      return true; // mantené el canal abierto para el callback async
+      saveKey("maf_challenge", v, sendResponse);
+      return true; // async
+    }
+
+    if (msg.type === "maf:set_site") {
+      const v = msg.value ? String(msg.value).toUpperCase() : null;
+      saveKey("maf_site", v, sendResponse);
+      return true; // async
     }
   } catch (e) {
     console.error("[BG] onMessage error:", e);
-    // Aún así respondemos algo para no dejar colgado el remitente
-    try { sendResponse({ ok: false, error: String(e) }); } catch (_) {}
+    try { sendResponse({ ok: false, error: String(e) }); } catch(_) {}
   }
 });

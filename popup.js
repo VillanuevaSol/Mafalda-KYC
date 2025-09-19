@@ -1,137 +1,283 @@
-// popup.js — muestra títulos y CDU detectado (lee session y/o local)
+// popup.js — MV3. Muestra SITE/CDU detectados, maneja la fuente remota y lista los snippets.
+// Este archivo funciona aunque tu popup.html NO tenga la tarjeta de “Site detectado”:
+// si falta, la crea e inserta automáticamente.
 
-const els = {
-  url:   document.getElementById("remoteUrl"),
-  load:  document.getElementById("loadUrl"),
-  save:  document.getElementById("saveUrl"),
-  edit:  document.getElementById("editUrl"),
-  open:  document.getElementById("openUrl"),
-  list:  document.getElementById("snippets"),
-  empty: document.getElementById("empty"),
-  search:document.getElementById("search"),
-  toast: document.getElementById("toast"),
-  cdu:   document.getElementById("cduTag"),
-};
+(() => {
+  const $ = (sel) => document.querySelector(sel);
 
-let allSnippets = {};
-let allTitles   = {};
+  // Refs del DOM (el bloque de SITE puede no existir todavía)
+  const cduEl   = $("#cduTag");
+  let   siteEl  = $("#siteTag");
+  const urlInp  = $("#remoteUrl");
+  const btnLoad = $("#loadUrl");
+  const btnSave = $("#saveUrl");
+  const btnEdit = $("#editUrl");
+  const btnOpen = $("#openUrl");
+  const search  = $("#search");
+  const listEl  = $("#snippets");
+  const emptyEl = $("#empty");
+  const toastEl = $("#toast");
 
-function showToast(msg, type="ok"){
-  if (!els.toast){ console.log(msg); return; }
-  els.toast.textContent = msg;
-  els.toast.className = "toast " + (type || "ok");
-  els.toast.style.display = "block";
-  setTimeout(()=> els.toast && (els.toast.style.display="none"), 2200);
-}
+  // Estado
+  let SNIPPETS = {};
+  let TITLES   = {};
+  let REMOTE_URL = "";
 
-async function copyText(text){
-  try { await navigator.clipboard.writeText(text); showToast("Copiado","ok"); }
-  catch { showToast("No se pudo copiar","err"); }
-}
-
-function cleanForTitle(s){ return String(s||"").replace(/\{\{[^}]+\}\}/g,"").replace(/\s+/g," ").trim(); }
-function inferTitleFromSnippet(body){
-  const clean = cleanForTitle(typeof body === "string" ? body : (body?.body || ""));
-  const firstLine = (clean.split(/\n/)[0] || clean);
-  const firstSentence = firstLine.split(/(?<=\.)\s/)[0] || firstLine;
-  const t = firstSentence || "(sin título)";
-  return t.length > 120 ? (t.slice(0,117)+"…") : t;
-}
-function deepEqualMap(a={},b={}){ const ka=Object.keys(a).sort(), kb=Object.keys(b).sort(); if(ka.length!==kb.length) return false;
-  for(let i=0;i<ka.length;i++){ const k=ka[i]; if(k!==kb[i]) return false; const va=a[k], vb=b[k]; const ta=typeof va, tb=typeof vb;
-    if(ta!==tb) return false; if(va && tb==="object"){ if(JSON.stringify(va)!==JSON.stringify(vb)) return false; } else { if(String(va)!==String(vb)) return false; }
-  } return true; }
-
-function render(snips){
-  const keys = Object.keys(snips);
-  els.list.innerHTML = ""; els.empty.style.display = keys.length ? "none" : "block";
-  keys.forEach((shortcut)=>{
-    const item=document.createElement("div"); item.className="item";
-    const badge=document.createElement("span"); badge.className="badge"; badge.textContent=shortcut;
-    const text=document.createElement("div"); text.className="text";
-    const title = allTitles[shortcut] || inferTitleFromSnippet(snips[shortcut]);
-    text.textContent = title;
-    text.title = typeof snips[shortcut] === "string" ? snips[shortcut] : JSON.stringify(snips[shortcut], null, 2);
-    const actions=document.createElement("div");
-    const btnCopy=document.createElement("button"); btnCopy.className="ghost"; btnCopy.textContent="Copiar";
-    btnCopy.addEventListener("click", ()=> copyText(typeof snips[shortcut]==="string" ? snips[shortcut] : (snips[shortcut].body||"")));
-    actions.appendChild(btnCopy);
-    item.appendChild(badge); item.appendChild(text); item.appendChild(actions);
-    els.list.appendChild(item);
-  });
-}
-function applySearch(){
-  const q=(els.search.value||"").toLowerCase(); const out={};
-  for(const [k,v] of Object.entries(allSnippets)){
-    const raw=(typeof v==="string")?v:(JSON.stringify(v)||"");
-    const t=(allTitles[k]||inferTitleFromSnippet(raw)||"").toLowerCase();
-    if(k.toLowerCase().includes(q) || raw.toLowerCase().includes(q) || t.includes(q)) out[k]=v;
+  /* ---------------------- Utilidades UI ---------------------- */
+  function toast(msg, kind = "ok") {
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.classList.remove("ok", "err");
+    toastEl.classList.add(kind === "err" ? "err" : "ok");
+    toastEl.style.display = "block";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => (toastEl.style.display = "none"), 1700);
   }
-  render(out);
-}
 
-/* --------- carga remota --------- */
-async function loadFromUrl(opts={}) {
-  const { silent=false, onlyOnChange=true } = opts;
-  const url = els.url.value.trim();
-  if(!url){ if(!silent) showToast("Pegá una URL válida","err"); return; }
-  try{
-    const res = await fetch(url,{ cache:"no-store" });
-    const data = await res.json();
-    const snips  = (data && typeof data==="object" && data.snippets) ? data.snippets : data;
-    const titles = (data && typeof data==="object" && data.titles)   ? data.titles   : {};
-    if(!snips || typeof snips!=="object") throw new Error("Formato inválido");
-    const changed = !deepEqualMap(allSnippets,snips) || !deepEqualMap(allTitles,titles);
-    chrome.storage.local.set({snippets:snips,titles:titles}, ()=>{
-      allSnippets=snips; allTitles=titles||{}; render(allSnippets);
-      if(!silent && (!onlyOnChange || changed)) showToast("Fragmentos actualizados","ok");
-    });
-  }catch(e){ console.error(e); if(!silent) showToast("Error al cargar","err"); }
-}
-function saveUrl(){
-  const url=els.url.value.trim(); if(!url){ showToast("No hay URL","err"); return; }
-  chrome.storage.local.set({remoteUrl:url}, ()=>{
-    els.url.setAttribute("readonly",true); els.save.style.display="none"; els.edit.style.display="inline-block";
-    showToast("URL guardada","ok");
-  });
-}
-function enableEdit(){ els.url.removeAttribute("readonly"); els.save.style.display="inline-block"; els.edit.style.display="none"; }
+  // Si el bloque “Site detectado” no existe, lo creamos.
+  function ensureSiteSection() {
+    if (siteEl) return siteEl;
+    const cduCard = $("#cardCdu");
+    const afterHeader = document.querySelector("header")?.nextElementSibling || document.body.firstChild;
 
-/* --------- CDU detectado --------- */
-function setCduBadge(val){ els.cdu.textContent = val || "—"; els.cdu.title = val ? "Detectado en la pestaña" : "Sin detección"; }
-function refreshCdu(){
-  // Leemos primero de session, si no, de local (el background guarda en uno de los dos)
-  try{
-    if (chrome?.storage?.session?.get) {
-      chrome.storage.session.get({ maf_challenge:null }, r=>{
-        if (r?.maf_challenge) setCduBadge(r.maf_challenge);
-        else chrome.storage.local.get({ maf_challenge:null }, r2=> setCduBadge(r2?.maf_challenge || null));
-      });
+    const sec = document.createElement("section");
+    sec.className = "card";
+    sec.style.marginBottom = "12px";
+    sec.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="font-weight:700;">Site detectado</div>
+        <span id="siteTag" class="badge">—</span>
+      </div>`;
+
+    if (cduCard?.parentNode) {
+      cduCard.parentNode.insertBefore(sec, cduCard); // antes del card de CDU
+    } else if (afterHeader?.parentNode) {
+      afterHeader.parentNode.insertBefore(sec, afterHeader); // justo después del header
     } else {
-      chrome.storage.local.get({ maf_challenge:null }, r=> setCduBadge(r?.maf_challenge || null));
+      document.body.prepend(sec);
     }
-  }catch(_){}
-}
 
-/* --------- init --------- */
-(function init(){
-  chrome.storage.local.get({ remoteUrl:"", snippets:{}, titles:{} }, (res)=>{
-    els.url.value = res.remoteUrl || "";
-    if (res.remoteUrl){ els.url.setAttribute("readonly",true); els.save.style.display="none"; els.edit.style.display="inline-block"; }
-    allSnippets = res.snippets || {}; allTitles = res.titles || {}; render(allSnippets);
-    if (els.url.value.trim()) setTimeout(()=> loadFromUrl({silent:true, onlyOnChange:true}), 150);
-  });
+    siteEl = $("#siteTag");
+    return siteEl;
+  }
 
-  els.load.addEventListener("click", ()=> loadFromUrl({silent:false, onlyOnChange:true}));
-  els.save.addEventListener("click", saveUrl);
-  els.edit.addEventListener("click", enableEdit);
-  els.open.addEventListener("click", ()=>{ if(els.url.value) chrome.tabs.create({ url: els.url.value }); });
-  els.search.addEventListener("input", applySearch);
+  function setCDUBadge(val) {
+    if (!cduEl) return;
+    cduEl.textContent = val || "—";
+    cduEl.title = val ? "CDU detectado en la pestaña actual" : "Sin detección";
+  }
 
-  refreshCdu();
-  chrome.storage.onChanged.addListener((changes, area)=>{
-    if ((area==="session" || area==="local") && changes?.maf_challenge) {
-      setCduBadge(changes.maf_challenge.newValue || null);
+  function setSiteBadge(val) {
+    ensureSiteSection();
+    siteEl.textContent = val || "—";
+    siteEl.title = val ? "Site detectado en la pestaña actual" : "Sin detección";
+  }
+
+  function setUrlReadonly(ro) {
+    urlInp.readOnly = !!ro;
+    btnEdit.style.display = ro && urlInp.value ? "inline-block" : "none";
+  }
+
+  const escapeHtml = (s) =>
+    String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+
+  const escapeAttr = (s) => String(s).replace(/"/g, "&quot;");
+
+  function renderSnippets(filter = "") {
+    listEl.innerHTML = "";
+    const keys = Object.keys(SNIPPETS);
+    const q = filter.trim().toLowerCase();
+
+    const filtered = q
+      ? keys.filter((k) => {
+          const title = TITLES[k] || "";
+          return (
+            k.toLowerCase().includes(q) ||
+            title.toLowerCase().includes(q) ||
+            (typeof SNIPPETS[k] === "string" && SNIPPETS[k].toLowerCase().includes(q))
+          );
+        })
+      : keys;
+
+    if (!filtered.length) {
+      emptyEl.style.display = "block";
+      return;
     }
-  });
+    emptyEl.style.display = "none";
+
+    filtered
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((k) => {
+        const title = TITLES[k] || "";
+        const div = document.createElement("div");
+        div.className = "item";
+        div.innerHTML = `
+          <span class="badge">${escapeHtml(k)}</span>
+          <div class="text">${escapeHtml(title || (typeof SNIPPETS[k] === "string" ? SNIPPETS[k].slice(0, 140) : ""))}</div>
+          <button class="ghost" data-k="${escapeAttr(k)}" title="Copiar atajo">Copiar</button>
+        `;
+        div.querySelector("button").addEventListener("click", async (ev) => {
+          ev.preventDefault();
+          try {
+            await navigator.clipboard.writeText(k);
+            toast("Atajo copiado ✅");
+          } catch {
+            toast("No se pudo copiar", "err");
+          }
+        });
+        listEl.appendChild(div);
+      });
+  }
+
+  /* ---------------------- Storage helpers ---------------------- */
+  const getLocal = (keys, defaults = {}) =>
+    new Promise((resolve) => {
+      try {
+        chrome.storage.local.get(keys, (res) => resolve({ ...defaults, ...(res || {}) }));
+      } catch {
+        resolve({ ...defaults });
+      }
+    });
+
+  const setLocal = (obj) => {
+    try {
+      chrome.storage.local.set(obj, () => {});
+    } catch {}
+  };
+
+  const getSession = (keys, defaults = {}) =>
+    new Promise((resolve) => {
+      try {
+        chrome.storage.session.get(keys, (res) => resolve({ ...defaults, ...(res || {}) }));
+      } catch {
+        resolve({ ...defaults });
+      }
+    });
+
+  /* ---------------------- Fuente remota ---------------------- */
+  async function fetchJsonFromUrl(url) {
+    const resp = await fetch(url, { credentials: "omit", cache: "no-store" });
+    const text = await resp.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      // fallback por si el texto viene con prefijo/sufijo
+      const m = text.match(/\{[\s\S]*\}$/);
+      if (m) return JSON.parse(m[0]);
+      throw new Error("La respuesta no es JSON válido");
+    }
+  }
+
+  async function loadFromRemote(url) {
+    const data = await fetchJsonFromUrl(url);
+    if (!data || typeof data !== "object" || !data.snippets) {
+      throw new Error("Estructura inválida: falta 'snippets'");
+    }
+    const snippets = data.snippets;
+    const titles = data.titles || {};
+
+    setLocal({
+      remote_url: url,
+      snippets,
+      titles,
+      last_sync: Date.now(),
+    });
+
+    SNIPPETS = snippets;
+    TITLES = titles;
+    REMOTE_URL = url;
+
+    renderSnippets(search.value);
+    toast("Fuente actualizada ✅");
+  }
+
+  /* ---------------------- Init ---------------------- */
+  async function init() {
+    // Badges (SITE/CDU) desde storage — preferimos session
+    try {
+      const s1 = await getSession(["maf_challenge", "maf_site"]);
+      const s2 = await getLocal(["maf_challenge", "maf_site"]);
+      setCDUBadge(s1.maf_challenge || s2.maf_challenge || null);
+      setSiteBadge(s1.maf_site || s2.maf_site || null);
+    } catch {}
+
+    // Config/snippets persistidos
+    const { remote_url = "", snippets = {}, titles = {} } = await getLocal([
+      "remote_url",
+      "snippets",
+      "titles",
+    ]);
+    REMOTE_URL = remote_url || "";
+    SNIPPETS = snippets || {};
+    TITLES = titles || {};
+
+    urlInp.value = REMOTE_URL;
+    setUrlReadonly(!!REMOTE_URL);
+    renderSnippets("");
+
+    // Listeners de UI
+    btnEdit.addEventListener("click", () => setUrlReadonly(false));
+    btnOpen.addEventListener("click", () => {
+      const u = (urlInp.value || REMOTE_URL || "").trim();
+      if (!u) return;
+      try {
+        chrome.tabs.create({ url: u });
+      } catch {
+        window.open(u, "_blank");
+      }
+    });
+    btnSave.addEventListener("click", () => {
+      const val = (urlInp.value || "").trim();
+      setLocal({ remote_url: val });
+      REMOTE_URL = val;
+      setUrlReadonly(!!val);
+      toast("URL guardada ✅");
+    });
+    btnLoad.addEventListener("click", async () => {
+      const val = (urlInp.value || REMOTE_URL || "").trim();
+      if (!val) {
+        toast("Pegá una URL primero", "err");
+        return;
+      }
+      btnLoad.disabled = true;
+      try {
+        await loadFromRemote(val);
+      } catch (e) {
+        console.error(e);
+        toast("No se pudo actualizar la fuente", "err");
+      } finally {
+        btnLoad.disabled = false;
+      }
+    });
+    search.addEventListener("input", () => renderSnippets(search.value));
+
+    // Reaccionar a cambios de storage (live)
+    chrome.storage.onChanged.addListener((changes, area) => {
+      try {
+        if ((area === "session" || area === "local") && changes?.maf_challenge) {
+          setCDUBadge(changes.maf_challenge.newValue || null);
+        }
+        if ((area === "session" || area === "local") && changes?.maf_site) {
+          setSiteBadge(changes.maf_site.newValue || null);
+        }
+        if (area === "local" && (changes?.snippets || changes?.titles)) {
+          SNIPPETS = (changes.snippets && changes.snippets.newValue) || SNIPPETS;
+          TITLES = (changes.titles && changes.titles.newValue) || TITLES;
+          renderSnippets(search.value);
+        }
+        if (area === "local" && changes?.remote_url) {
+          REMOTE_URL = changes.remote_url.newValue || "";
+          urlInp.value = REMOTE_URL;
+          setUrlReadonly(!!REMOTE_URL);
+        }
+      } catch {}
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
 })();
