@@ -1,4 +1,4 @@
-# FOS Xpress
+# Mafalda
 
 Extensión de Chrome para **automatizar y acelerar respuestas con snippets personalizados**.  
 Permite insertar plantillas con atajos (`/atajo`), variables editables (inputs, selects),  
@@ -46,3 +46,4 @@ completa_textos_extension/
 ## 📧 Contacto
 Para consultas, sugerencias o reportar errores:  
 **maria.villanueva@mercadolibre.com**
+
