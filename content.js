@@ -1,11 +1,12 @@
-/** content.js — FOSXpress v3.7.0
+/** content.js — FOSXpress v3.7.1
  *  - Snippets + placeholders + diálogo + typeahead + soporte mail
  *  - Detección CDU (challenge) + SITE (país) desde el DOM → background/storage
- *  - NUEVO: Gatillo “maf” → toma el texto escrito antes del token, abre panel IA,
- *           valida casuística contra guía (vía Apps Script) y propone mensaje final.
+ *  - Gatillo “maf” → toma el texto escrito antes del token, abre panel IA,
+ *    valida casuística contra guía (vía Apps Script) y propone mensaje final.
+ *  - NUEVO: analyzeWithAI usa background (evita CORS).
  */
 
-console.log("[FOSXpress] content script v3.7.0 loaded");
+console.log("[FOSXpress] content script v3.7.1 loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -590,7 +591,7 @@ function handleTypeaheadKey(e){
   if (e.key === "ArrowDown") { taSelIdx = Math.min(taSelIdx+1, taItems.length-1); }
   else if (e.key === "ArrowUp") { taSelIdx = Math.max(taSelIdx-1, 0); }
   else if (e.key === "Enter" || e.key === "Tab") { selectTypeahead(taSelIdx>=0?taSelIdx:0); return true; }
-  else if (e.key >= "1" && e.key <= "9") { const i = parseInt(e.key,10)-1; if (i < taItems.length) { selectTypeahead(i); return true; } }
+  else if (e.key >= "1" && e <= "9") { const i = parseInt(e.key,10)-1; if (i < taItems.length) { selectTypeahead(i); return true; } }
   else if (e.key === "Escape") { hideTypeahead(); return true; }
   renderTypeahead(taItems, currentAnchorRect(taTarget));
   return ["ArrowDown","ArrowUp","Enter","Tab","Escape"].includes(e.key) || (/^[1-9]$/.test(e.key));
@@ -966,28 +967,49 @@ function removeMafToken(ctx){
   }
 }
 
-/** Llama al Apps Script configurado en popup (remote_url) */
+/* === NUEVO: normalizador de URL de Apps Script === */
+function normalizeAppsScriptUrl(u){
+  if (!u) return u;
+  return String(u).replace(
+    /https:\/\/script\.google\.com\/a\/macros\/[^/]+\/s\//,
+    "https://script.google.com/macros/s/"
+  );
+}
+
+/** Llama al background para que haga el fetch a Apps Script (evita CORS) */
 async function analyzeWithAI(freeText){
   const cdu  = await storageGetSafe("maf_challenge", null);
   const site = await storageGetSafe("maf_site", null);
-  const remote = await storageGetLocal("remote_url", "");
-  if(!remote) throw new Error("Sin URL remota configurada.");
+  const remoteRaw = await storageGetLocal("remote_url", "");
+  const remote = normalizeAppsScriptUrl(remoteRaw || "");
+  if(!remote) throw new Error('Falta configurar la "Fuente remota" en el popup');
 
-  const body = { op:"analyze", text:freeText, cdu:cdu||null, site:site||null };
-
-  const resp = await fetch(remote, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "omit",
-    cache: "no-store",
-    body: JSON.stringify(body)
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "maf:ai_analyze",
+          remoteUrl: remote,
+          text: freeText,
+          cdu: cdu || null,
+          site: site || null
+        },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (!resp || resp.ok === false) {
+            reject(new Error(resp?.error || "No se pudo analizar."));
+            return;
+          }
+          resolve(resp.data); // { ok:true, detected, isAllowed, improved }
+        }
+      );
+    } catch (e) {
+      reject(e);
+    }
   });
-  const raw = await resp.text();
-  let data;
-  try { data = JSON.parse(raw); }
-  catch(_){ const m = raw.match(/\{[\s\S]*\}$/); data = m ? JSON.parse(m[0]) : null; }
-  if(!data || data.ok === false) throw new Error(data?.error || "No se pudo analizar el texto.");
-  return data; // { ok:true, detected:[...], isAllowed:true/false, improved:"..." }
 }
 
 /** Panel con estilo Mafalda (similar al mock) */
@@ -1063,12 +1085,10 @@ function openMafPanel(freeText, ctxForInsert){
 
   caseEl.textContent = freeText || "(vacío)";
 
-  function close(){ try{ dlg.close(); }catch(_){} host.remove(); }
+  function close(){ try{ dlg.close(); }catch(_){ } host.remove(); }
 
   btnClose.onclick = close;
-  btnCopy.onclick = async ()=>{
-    try{ await navigator.clipboard.writeText(finalEl.innerText || ""); }catch(_){}
-  };
+  btnCopy.onclick = async ()=>{ try{ await navigator.clipboard.writeText(finalEl.innerText || ""); }catch(_){ } };
   btnIns.onclick = ()=>{
     const clean = (finalEl.innerText || "").trim();
     if(!clean) return;
