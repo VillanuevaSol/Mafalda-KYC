@@ -984,26 +984,14 @@ async function analyzeWithAI(freeText){
   const remote = normalizeAppsScriptUrl(remoteRaw || "");
   if(!remote) throw new Error('Falta configurar la "Fuente remota" en el popup');
 
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     try {
       chrome.runtime.sendMessage(
-        {
-          type: "maf:ai_analyze",
-          remoteUrl: remote,
-          text: freeText,
-          cdu: cdu || null,
-          site: site || null
-        },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (!resp || resp.ok === false) {
-            reject(new Error(resp?.error || "No se pudo analizar."));
-            return;
-          }
-          resolve(resp.data); // { ok:true, detected, isAllowed, improved }
+        { type: "maf:ai_analyze", remoteUrl: remote, text: freeText, cdu: cdu || null, site: site || null },
+        (res) => {
+          if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+          if (!res || res.ok === false) return reject(new Error(res?.error || "No se pudo analizar el texto."));
+          resolve(res.data);
         }
       );
     } catch (e) {
