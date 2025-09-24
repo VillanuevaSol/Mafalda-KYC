@@ -230,6 +230,56 @@ function insertAtEditable(ctx, finalText){
   emitInputLike(root);
 }
 
+
+/* === Helper v4 (anclado en ctx.del): Reemplaza TODO lo previo al caret por finalText sin depender de la selección activa (dialog) === */
+function replaceBeforeCaret(ctx, finalText){
+  // INPUT/TEXTAREA
+  try{
+    if (ctx && ctx.kind === "input" && ctx.el) {
+      const el = ctx.el;
+      const caret = Number(el.selectionStart || 0);
+      const after = String(el.value || "").slice(caret);
+      el.value = String(finalText) + after;
+      const pos = String(finalText).length;
+      try { el.setSelectionRange(pos, pos); } catch(_){}
+      emitInputLike(el);
+      return;
+    }
+  }catch(_){}
+
+  // CONTENTEDITABLE usando el rango original (ctx.del) como ancla
+  try{
+    if (!ctx || ctx.kind !== "editable" || !ctx.del) return;
+    const root = getEditableRootFromNode(ctx.del.startContainer) || document.activeElement || document.body;
+    if (!root.contains(ctx.del.startContainer)) return;
+
+    // Insertamos un marcador en el punto exacto donde estaba "maf"
+    const marker = document.createElement("span");
+    marker.setAttribute("data-maf-anchor","1");
+    marker.style.cssText = "display:inline-block;width:0;height:0;overflow:hidden;";
+    try { ctx.del.insertNode(marker); } catch(_){ return; }
+
+    // Borramos TODO lo anterior al marcador dentro del root editable
+    const wipe = document.createRange();
+    wipe.setStart(root, 0);
+    try { wipe.setEndBefore(marker); } catch(_){ wipe.setEnd(root, 0); }
+    wipe.deleteContents();
+
+    // Reemplazamos el marcador por el texto final
+    const tn = document.createTextNode(String(finalText));
+    marker.replaceWith(tn);
+
+    // Dejamos el caret al final
+    const sel = window.getSelection();
+    if (sel) {
+      const r = document.createRange();
+      r.setStart(tn, tn.length); r.setEnd(tn, tn.length);
+      sel.removeAllRanges(); sel.addRange(r);
+    }
+
+    emitInputLike(root);
+  }catch(_){}
+}
 /* ========================== UI: diálogo de placeholders ========================== */
 const ML={yellow:"#FFE600",blue:"#3483FA",border:"#E6E6E6",dark:"#333"};
 let shadowHost=null, dialogOpen=false;
@@ -1077,13 +1127,7 @@ function openMafPanel(freeText, ctxForInsert){
 
   btnClose.onclick = close;
   btnCopy.onclick = async ()=>{ try{ await navigator.clipboard.writeText(finalEl.innerText || ""); }catch(_){ } };
-  btnIns.onclick = ()=>{
-    const clean = (finalEl.innerText || "").trim();
-    if(!clean) return;
-    if(ctxForInsert.kind === "input") insertAtInput(ctxForInsert, clean);
-    else insertAtEditable(ctxForInsert, clean);
-    close();
-  };
+  btnIns.onclick = () => { const clean = (finalEl.innerText || "").trim(); if (!clean) return; replaceBeforeCaret(ctxForInsert, clean); close(); };
 
   dlg.addEventListener("cancel", e=>e.preventDefault());
   dlg.showModal();
