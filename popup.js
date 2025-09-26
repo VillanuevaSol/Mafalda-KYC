@@ -1,12 +1,10 @@
-// popup.js — MV3. Muestra SITE/CDU detectados, maneja la fuente remota y lista los snippets.
-// Soporta WebApps públicos y también internos (dominio ML) con cookies: intento sin cookies y, si no es JSON, reintento con cookies.
-
+// popup.js — MV3. UI v1 + normalización de Apps Script + carga de snippets
 (() => {
   const $ = (sel) => document.querySelector(sel);
 
-  // Refs (site puede no existir aún: lo creamos con ensureSiteSection)
+  // Refs
   const cduEl   = $("#cduTag");
-  let siteEl    = $("#siteTag");
+  let   siteEl  = $("#siteTag");
   const urlInp  = $("#remoteUrl");
   const btnLoad = $("#loadUrl");
   const btnSave = $("#saveUrl");
@@ -17,9 +15,8 @@
   const emptyEl = $("#empty");
   const toastEl = $("#toast");
 
-  // Estado
-  let SNIPPETS = {};
-  let TITLES   = {};
+  let SNIPPETS   = {};
+  let TITLES     = {};
   let REMOTE_URL = "";
 
   /* -------------------- helpers UI -------------------- */
@@ -36,6 +33,21 @@
     if (!cduEl) return;
     cduEl.textContent = val || "—";
     cduEl.title = val ? "CDU detectado en la pestaña actual" : "Sin detección";
+  }
+  function ensureSiteSection() {
+    if (siteEl) return siteEl;
+    const cduCard = $("#cardCdu");
+    const sec = document.createElement("section");
+    sec.className = "card";
+    sec.style.marginBottom = "12px";
+    sec.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="font-weight:700;">Site detectado</div>
+        <span id="siteTag" class="badge">—</span>
+      </div>`;
+    (cduCard?.parentNode || document.body).insertBefore(sec, cduCard || null);
+    siteEl = $("#siteTag");
+    return siteEl;
   }
   function setSiteBadge(val) {
     ensureSiteSection();
@@ -59,8 +71,7 @@
           return (
             k.toLowerCase().includes(q) ||
             title.toLowerCase().includes(q) ||
-            (typeof SNIPPETS[k] === "string" &&
-              SNIPPETS[k].toLowerCase().includes(q))
+            (typeof SNIPPETS[k] === "string" && SNIPPETS[k].toLowerCase().includes(q))
           );
         })
       : keys;
@@ -84,23 +95,6 @@
       });
       listEl.appendChild(div);
     });
-  }
-
-  /* -------------------- crea la tarjeta "Site detectado" si no existe -------------------- */
-  function ensureSiteSection() {
-    if (siteEl) return siteEl;
-    const cduCard = $("#cardCdu"); // insertamos justo antes del CDU
-    const sec = document.createElement("section");
-    sec.className = "card";
-    sec.style.marginBottom = "12px";
-    sec.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;">
-        <div style="font-weight:700;">Site detectado</div>
-        <span id="siteTag" class="badge">—</span>
-      </div>`;
-    (cduCard?.parentNode || document.body).insertBefore(sec, cduCard || null);
-    siteEl = $("#siteTag");
-    return siteEl;
   }
 
   /* -------------------------- Storage helpers -------------------------- */
@@ -127,19 +121,19 @@
     );
   }
 
-  /* -------------------------- Remote fetch (inteligente) -------------------------- */
+  /* -------------------------- Remote fetch (sin/cons cookies) -------------------------- */
   async function fetchJsonFromUrl(url) {
     const normalized = normalizeAppsScriptUrl((url || "").trim());
     if (!normalized) throw new Error("URL vacía");
 
-    // 1) intento sin cookies (sirve para WebApps públicos)
+    // 1) intento sin cookies (WebApps públicos)
     try {
       const r1 = await fetch(normalized, { credentials: "omit", cache: "no-store" });
       const t1 = await r1.text();
-      try { return JSON.parse(t1); } catch { /* fall-through */ }
-    } catch { /* fall-through */ }
+      try { return JSON.parse(t1); } catch { /* sigue */ }
+    } catch { /* sigue */ }
 
-    // 2) reintento con cookies (sirve para “Anyone within MercadoLibre SRL”)
+    // 2) reintento con cookies (WebApps internos /a/macros → ya normalizados)
     const r2 = await fetch(normalized, { credentials: "include", cache: "no-store" });
     const t2 = await r2.text();
     try { return JSON.parse(t2); }
@@ -167,7 +161,7 @@
 
   /* -------------------------- Init -------------------------- */
   async function init() {
-    // Badges (SITE/CDU) desde storage: preferimos session
+    // Badges SITE/CDU desde storage (session > local)
     try {
       const s1 = await getSession(["maf_challenge","maf_site"]);
       const s2 = await getLocal(["maf_challenge","maf_site"]);
@@ -175,7 +169,7 @@
       setSiteBadge(s1.maf_site || s2.maf_site || null);
     } catch {}
 
-    // Config/snippets persistidos
+    // Config/snippets guardados
     const { remote_url="", snippets={}, titles={} } = await getLocal(["remote_url","snippets","titles"]);
     REMOTE_URL = remote_url || ""; SNIPPETS = snippets || {}; TITLES = titles || {};
     urlInp.value = REMOTE_URL; setUrlReadonly(!!REMOTE_URL);
@@ -183,25 +177,33 @@
 
     // Botones
     btnEdit.addEventListener("click", () => setUrlReadonly(false));
+
     btnOpen.addEventListener("click", () => {
-      const u = (urlInp.value || REMOTE_URL || "").trim();
+      const u = normalizeAppsScriptUrl((urlInp.value || REMOTE_URL || "").trim());
       if (!u) return;
       try { chrome.tabs.create({ url: u }); } catch { window.open(u, "_blank"); }
     });
+
     btnSave.addEventListener("click", () => {
-      const val = (urlInp.value || "").trim();
+      // ⬇⬇ NORMALIZA Y REFLEJA EN UI ⬇⬇
+      let val = (urlInp.value || "").trim();
+      val = normalizeAppsScriptUrl(val);
       setLocal({ remote_url: val });
       REMOTE_URL = val;
+      urlInp.value = val; // que el usuario vea la versión /macros/s/
       setUrlReadonly(!!val);
       toast("URL guardada ✅");
     });
+
     btnLoad.addEventListener("click", async () => {
-      const val = (urlInp.value || REMOTE_URL || "").trim();
+      let val = (urlInp.value || REMOTE_URL || "").trim();
+      val = normalizeAppsScriptUrl(val); // aseguro normalización previa al fetch
       if (!val) { toast("Pegá una URL primero","err"); return; }
       btnLoad.disabled = true;
       try { await loadFromRemote(val); } catch(e){ console.error(e); toast(String(e.message||e),"err"); }
       finally { btnLoad.disabled = false; }
     });
+
     search.addEventListener("input", () => renderSnippets(search.value));
 
     // Live updates desde storage
@@ -228,3 +230,4 @@
 
   document.addEventListener("DOMContentLoaded", init);
 })();
+

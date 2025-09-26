@@ -53,18 +53,20 @@
     </div>
   </header>
 
-  <!-- CDU detectado -->
+  <section class="card" style="margin-bottom:12px">
+    <div style="font-weight:700; margin-bottom:6px;">Site detectado</div>
+    <span id="siteTag" class="badge">—</span>
+  </section>
+
   <section class="card" id="cardCdu" style="margin-bottom:12px">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <div style="font-weight:700;">CDU detectado</div>
-      <span id="cduTag" class="badge">—</span>
-    </div>
+    <div style="font-weight:700; margin-bottom:6px;">CDU detectado</div>
+    <span id="cduTag" class="badge">—</span>
   </section>
 
   <section class="card">
     <div style="font-weight:700; margin-bottom:6px;">Fuente remota</div>
     <div class="row">
-      <input id="remoteUrl" type="text" placeholder="Pega la URL del Web App (…/exec) o Drive" />
+      <input id="remoteUrl" type="text" placeholder="Pega la URL del Web App (…/exec) o JSON público" />
     </div>
     <div class="row" style="margin-top:6px">
       <button id="loadUrl" class="primary">Actualizar</button>
@@ -73,7 +75,7 @@
       <button id="openUrl" class="ghost">Abrir</button>
     </div>
     <div class="divider"></div>
-    <div class="row search">
+    <div class="row">
       <input id="search" type="text" placeholder="Buscar fragmento o atajo…" />
     </div>
   </section>

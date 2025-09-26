@@ -1,12 +1,11 @@
-/** content.js — FOSXpress v3.7.1
- *  - Snippets + placeholders + diálogo + typeahead + soporte mail
- *  - Detección CDU (challenge) + SITE (país) desde el DOM → background/storage
- *  - Gatillo “maf” → toma el texto escrito antes del token, abre panel IA,
- *    valida casuística contra guía (vía Apps Script) y propone mensaje final.
- *  - NUEVO: analyzeWithAI usa background (evita CORS).
+/** content.js — FOSXpress v3.7.1 (VERSIÓN FUSIONADA Y CORREGIDA V2)
+ * - BASE: Tu versión robusta y funcional en Checker (v3.7.1)
+ * - CORRECCIÓN: Se reincorporan las funciones 'findMafInInput' y 'findMafInEditable' que se habían perdido en la fusión anterior.
+ * - MODIFICADO: Se adapta la llamada al Asistente IA ("maf") para que recolecte URLs de documentos y se comunique con el nuevo background.js,
+ * habilitando así el análisis con OCR sin perder la funcionalidad original.
  */
 
-console.log("[FOSXpress] content script v3.7.1 loaded");
+console.log("[FOSXpress] content script v3.7.1 FUSIONADO-CORREGIDO loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -707,10 +706,10 @@ async function onEvent(e){
 
   // 0) Asistente "maf": si detecto el token, manejo acá y corto
   if (e.key === " " || e.key === "Enter" || e.key === "Tab" || (e.type==="keydown" && e.ctrlKey && e.key===" ")) {
-    if (maybeHandleMaf(e)) { 
-      e.preventDefault?.(); 
-      e.stopPropagation?.(); 
-      return; 
+    if (maybeHandleMaf(e)) {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      return;
     }
   }
 
@@ -1026,20 +1025,65 @@ function normalizeAppsScriptUrl(u){
   );
 }
 
+// *** INICIO DE LA SECCIÓN MODIFICADA PARA COMPATIBILIDAD CON OCR ***
+
+const isPDF = (u) => /\.pdf(\?|$)/i.test(u || "");
+const isIMG = (u) => /\.(png|jpe?g|bmp|webp|tif?f)(\?|$)/i.test(u || "");
+const isDocUrl = (u) => isPDF(u) || isIMG(u);
+const MAX_DOCS = 8;
+
+function collectUrlsHere() {
+    const urls = new Set();
+    document.querySelectorAll('a[href], img[src], source[src], track[src], embed[src], object[data], iframe[src]').forEach(el => {
+      const urlAttr = el.getAttribute('href') || el.getAttribute('src') || el.getAttribute('data');
+      if (!urlAttr) return;
+      try {
+        const abs = new URL(urlAttr, location.href).href;
+        if (isDocUrl(abs)) urls.add(abs);
+      } catch {}
+    });
+
+    const arr = Array.from(urls);
+    const seen = new Set();
+    const clean = [];
+    for (const u of arr) {
+      const key = u.replace(/[?#].*$/, "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      clean.push(u);
+      if (clean.length >= MAX_DOCS) break;
+    }
+    console.log("[Mafalda] Documentos detectados para OCR:", clean);
+    return clean;
+}
+
 /** Llama al background para que haga el fetch a Apps Script (evita CORS) */
 async function analyzeWithAI(freeText){
-  const cdu  = await storageGetSafe("maf_challenge", null);
-  const site = await storageGetSafe("maf_site", null);
+  // 1. Obtener contexto (CDU/SITE) y URL remota
+  const cdu  = await storageGetSafe("maf_challenge", null) || mafCurrentChallenge;
+  const site = await storageGetSafe("maf_site", null) || mafCurrentSite;
   const remoteRaw = await storageGetLocal("remote_url", "");
   const remote = normalizeAppsScriptUrl(remoteRaw || "");
   if(!remote) throw new Error('Falta configurar la "Fuente remota" en el popup');
 
+  // 2. NUEVO: Recolectar URLs de documentos de la página
+  const docUrls = collectUrlsHere();
+
+  // 3. NUEVO: Enviar mensaje al background.js
   return await new Promise((resolve, reject) => {
     try {
+      // Usamos el mensaje esperado por el nuevo background script: "maf:ai_analyze_with_docs"
       chrome.runtime.sendMessage(
-        { type: "maf:ai_analyze", remoteUrl: remote, text: freeText, cdu: cdu || null, site: site || null },
+        {
+          type: "maf:ai_analyze_with_docs",
+          remoteUrl: remote,
+          text: freeText,
+          cdu: cdu || null,
+          site: site || null,
+          docUrls: docUrls
+        },
         (res) => {
-          if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
           if (!res || res.ok === false) return reject(new Error(res?.error || "No se pudo analizar el texto."));
           resolve(res.data);
         }
@@ -1148,8 +1192,6 @@ function openMafPanel(freeText, ctxForInsert){
       finalEl.textContent = "No pude generar la recomendación en este momento. Revisá la guía y redactá el mensaje para el usuario.";
     }
   })();
-
-  function escapeHTML(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}
 }
 
 /** Hook al flujo de eventos existente: si aparece 'maf', abrimos el panel */
@@ -1165,3 +1207,4 @@ function maybeHandleMaf(e){
   openMafPanel(freeText, ctx);
   return true;
 }
+  
