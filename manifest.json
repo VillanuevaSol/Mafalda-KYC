@@ -1,16 +1,18 @@
 {
   "name": "Mafalda",
   "description": "Insertá respuestas con atajos (snippets) y campos dinámicos. Macros de fecha y typeahead.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "manifest_version": 3,
 
   "permissions": ["storage"],
   "host_permissions": [
+    "<all_urls>",
     "https://script.google.com/*"
   ],
 
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
 
   "action": {
@@ -34,7 +36,22 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "libs/pdf.min.js",
+        "libs/pdf.worker.min.js",
+        "libs/tesseract.min.js",
+        "libs/tesseract.worker.min.js",
+        "libs/tesseract-core.wasm"
+      ],
+      "matches": ["<all_urls>"]
     }
   ]
 }
