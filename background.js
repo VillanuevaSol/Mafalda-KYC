@@ -124,6 +124,26 @@ async function extractFromUrl(url) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
 
+  // 0) Persistencia de SITE/CDU detectados desde el content script
+  if (msg.type === "maf:set_challenge") {
+    const v = (msg.value || "").toString().trim();
+    Promise.all([
+      chrome.storage.session.set({ maf_challenge: v }),
+      chrome.storage.local.set({ maf_challenge: v })
+    ]).then(() => sendResponse({ ok: true }))
+     .catch(e => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg.type === "maf:set_site") {
+    const v = (msg.value || "").toString().trim();
+    Promise.all([
+      chrome.storage.session.set({ maf_site: v }),
+      chrome.storage.local.set({ maf_site: v })
+    ]).then(() => sendResponse({ ok: true }))
+     .catch(e => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
   // 1) Análisis con OCR
   if (msg.type === "maf:ai_analyze_with_docs") {
     (async () => {

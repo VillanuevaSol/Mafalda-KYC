@@ -5,7 +5,7 @@
  * habilitando así el análisis con OCR sin perder la funcionalidad original.
  */
 
-console.log("[FOSXpress] content script v3.7.1 FUSIONADO-CORREGIDO loaded");
+console.log("[Mafalda] content script v3.7.1 FUSIONADO-CORREGIDO loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -14,13 +14,13 @@ function isContextInvalidatedMsg(msg){
 addEventListener("unhandledrejection", (e) => {
   if (isContextInvalidatedMsg(e?.reason?.message || e?.reason)) {
     e.preventDefault();
-    console.warn("[FOSXpress] Ignorado: Extension context invalidated (promise)");
+    console.warn("[Mafalda] Ignorado: Extension context invalidated (promise)");
   }
 });
 addEventListener("error", (e) => {
   if (isContextInvalidatedMsg(e?.message)) {
     e.preventDefault();
-    console.warn("[FOSXpress] Ignorado: Extension context invalidated (error)");
+    console.warn("[Mafalda] Ignorado: Extension context invalidated (error)");
   }
 });
 
