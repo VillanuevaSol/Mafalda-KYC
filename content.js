@@ -1183,7 +1183,6 @@ function openMafPanel(freeText, ctxForInsert){
       const items = Array.isArray(res.detected) ? res.detected : (res.detected ? [res.detected] : []);
       detEl.innerHTML = `
         <div>${items.length ? items.map(x=>`• ${escapeHTML(String(x))}`).join("<br>") : "—"}</div>
-        <div style="margin-top:6px">${ok ? '<span class="ok">✔ Correcto</span>' : '<span class="bad">✖ Incorrecto</span>'}</div>
       `;
       if (res.improved) finalEl.textContent = res.improved;
       finalEl.focus();
