@@ -1,91 +1,93 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <title>Completa textos · Fragmentos</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root{
-      --ml-yellow:#FFE600; --ml-blue:#3483FA; --ml-dark:#333; --ml-gray:#6D6D6D;
-      --ml-border:#E6E6E6; --ml-bg:#FAFAFA; --radius:12px;
-    }
-    *{ box-sizing:border-box }
-    body{ width:360px; margin:0; padding:16px; font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;
-          color:var(--ml-dark); background:var(--ml-bg); }
-    header{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
-    .brand{ width:12px; height:28px; border-radius:6px; background:var(--ml-yellow);
-            box-shadow:0 0 0 3px rgba(255,230,0,.25); }
-    h1{ font-size:16px; margin:0; line-height:1.1; }
-    .sub{ color:var(--ml-gray); font-size:12px; margin-top:2px; }
-    .card{ background:#fff; border:1px solid var(--ml-border); border-radius:var(--radius);
-           padding:12px; box-shadow:0 1px 2px rgba(0,0,0,.03); }
-    .row{ display:flex; gap:6px; align-items:stretch; }
-    input[type="text"]{ flex:1; padding:8px 10px; border:1px solid var(--ml-border); border-radius:8px;
-                        font-size:13px; outline:none; background:#fff; }
-    input[readonly]{ background:#f5f5f5; color:#555; }
-    input[type="text"]:focus{ border-color:var(--ml-blue); box-shadow:0 0 0 2px rgba(52,131,250,.12) }
-    button.primary{ background:var(--ml-blue); color:#fff; border:none; border-radius:8px; padding:6px 8px;
-                    font-weight:600; font-size:12px; cursor:pointer; }
-    button.secondary{ background:#fff; color:var(--ml-blue); border:1px solid var(--ml-blue); border-radius:8px;
-                      padding:6px 8px; font-weight:600; font-size:12px; cursor:pointer; }
-    button.ghost{ background:transparent; color:var(--ml-gray); border:1px dashed var(--ml-border);
-                  border-radius:8px; padding:6px 8px; font-size:12px; cursor:pointer; }
-    .divider{ height:1px; background:var(--ml-border); margin:12px 0 }
-    .list{ display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto; }
-    .item{ border:1px solid var(--ml-border); border-radius:10px; background:#fff; padding:10px;
-           display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; }
-    .badge{ background:var(--ml-yellow); color:#000; font-weight:700; padding:4px 8px; border-radius:999px;
-            border:1px solid rgba(0,0,0,.05); font-family:ui-monospace,Menlo,Monaco,Consolas,"Courier New",monospace; }
-    .text{ font-size:13px; color:#222; white-space:pre-wrap; word-break:break-word }
-    .empty{ text-align:center; color:var(--ml-gray); padding:18px; border:1px dashed var(--ml-border); border-radius:10px; background:#fff; }
-    .toast{ position:fixed; inset:auto 16px 16px 16px; background:#111; color:#fff; border-radius:12px;
-            padding:10px 12px; font-size:13px; display:none; }
-    .toast.ok{ background:#1f7a1f } .toast.err{ background:#b00020 }
-    button:focus-visible, a:focus-visible, input:focus-visible{ outline:2px solid var(--ml-blue); outline-offset:2px }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
+<title>Mafalda · Popup</title>
+<style>
+  :root{ --azul:#283277; --meli:#FFC800; --ink:#333333; --bg:#f1f7ff; --muted:#6b7280; --border:rgba(40,50,119,.18); --border2:rgba(40,50,119,.30) }
+  *{ box-sizing:border-box }
+  body{ margin:0; font-family:'Rubik',system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--ink); background:var(--bg) }
+  .wrap{ width:360px; margin:12px auto }
+  .head{ background:var(--azul); color:#fff; padding:10px 12px; border-radius:14px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 0 rgba(0,0,0,.06) }
+  .logo{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:7px; background:linear-gradient(180deg, rgba(255,200,0,.16), rgba(255,200,0,.07)); box-shadow:inset 0 0 0 1px rgba(40,50,119,.25) }
+  .logo img{ width:18px; height:18px; display:block }
+  h1{ font-size:16px; margin:0; line-height:1; font-weight:800 }
+  .sub{ margin-left:6px; font-size:12px; color:#e7e9ff }
+  .sec{ margin-top:12px; background:#fff; border:1px solid var(--border); border-radius:16px; padding:12px; box-shadow:0 10px 28px rgba(0,0,0,.06) }
+  .fieldset{ display:flex; flex-direction:column; gap:6px; margin:10px 0 }
+  label{ font-size:12px; color:var(--azul); font-weight:800 }
+  .row{ display:flex; gap:8px; align-items:center }
+  input[type="text"]{ flex:1; padding:10px 11px; border:1px solid var(--border); border-radius:12px; font-size:13px }
+  input[type="text"]:focus{ outline:none; box-shadow:0 0 0 3px rgba(40,50,119,.12) }
+  .btn{ border-radius:12px; padding:10px 12px; font-weight:800; font-size:12px; cursor:pointer; }
+  .btn.primary{ background:var(--azul); color:#fff; border:1px solid transparent; box-shadow:0 1px 0 rgba(0,0,0,.05) }
+  .btn{ border:1px solid var(--border2); background:#fff; color:var(--azul) }
+  .btn.ghost{ border:1px dashed var(--border); color:#555; background:transparent }
+
+  /* Chips (badges) */
+  .chips{ display:flex; gap:8px; flex-wrap:wrap }
+  .badge{ display:inline-flex; align-items:center; padding:6px 10px; border-radius:999px; border:1px solid var(--border2); background:#fff; font:700 12px/1 'Rubik',sans-serif; color:var(--azul) }
+  .badge::before{ content:''; width:8px; height:8px; border-radius:50%; background:var(--meli); margin-right:6px }
+
+  .list{ display:flex; flex-direction:column; gap:10px; max-height:260px; overflow:auto; padding-right:2px }
+  .item{ border:1px solid var(--border); border-radius:14px; background:#fff; padding:10px 12px; display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; box-shadow:0 1px 0 rgba(0,0,0,.02); transition:border-color .15s ease, box-shadow .15s ease }
+  .item:hover{ border-color:var(--border2); box-shadow:0 4px 12px rgba(0,0,0,.05) }
+  .text{ font-size:13px; color:#1f2937; }
+  .item .ghost{ border:1px solid var(--border2); border-radius:999px; padding:8px 12px; background:#fff; color:var(--azul); font-weight:800 }
+  .item .ghost::before{ content:"\1F4CB"; margin-right:6px }
+
+  .i-caption{ font-size:11px; color:var(--muted) }
+
+  /* Toast */
+  .toast{ position:fixed; left:50%; transform:translateX(-50%); bottom:12px; z-index:9999; background:#283277; color:#fff; border-radius:12px; padding:10px 14px; font:700 12px/1.2 "Rubik", sans-serif; box-shadow:0 8px 20px rgba(0,0,0,.15); border:1px solid rgba(255,255,255,.18); animation:toastIn .22s ease-out; display:none }
+  .toast.ok{ background:#1f7a1f } .toast.err{ background:#b00020 }
+  @keyframes toastIn{ from{ opacity:0; transform:translateX(-50%) translateY(6px) } to{ opacity:1; transform:translateX(-50%) translateY(0) } }
+</style>
 </head>
 <body>
-  <header>
-    <div class="brand"></div>
-    <div>
-      <h1>Completa textos</h1>
-      <div class="sub">Fragmentos centralizados (solo lectura)</div>
+  <div class="wrap">
+    <header class="head">
+      <span class="logo" aria-hidden="true"><img src="mafalda-icon-22-rounded.png" alt=""></span>
+      <h1>Mafalda</h1><span class="sub">completa textos</span>
+    </header>
+
+    <div class="sec">
+      <div class="fieldset">
+        <label>Estado detectado</label>
+        <div class="chips">
+          <span id="siteTag" class="badge">—</span>
+          <span id="cduTag" class="badge">—</span>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <label>Fuente remota</label>
+        <div class="row">
+          <input id="remoteUrl" type="text" placeholder="Pega la URL del Web App (…/exec) o JSON público">
+          <button id="openUrl" class="btn" title="Abrir">↗</button>
+        </div>
+        <div class="row">
+          <button id="loadUrl" class="btn primary">Actualizar</button>
+          <button id="saveUrl" class="btn">Guardar</button>
+          <button id="editUrl" class="btn ghost">Editar</button>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <label>Buscar fragmento o atajo</label>
+        <input id="search" type="text" placeholder="/estado, /cashout…">
+      </div>
+
+      <div id="snippets" class="list"></div>
+      <div id="empty" class="i-caption" style="text-align:center; padding:12px; display:none;">Sin resultados</div>
+
+      <div id="toast" class="toast" aria-live="polite"></div>
     </div>
-  </header>
-
-  <section class="card" style="margin-bottom:12px">
-    <div style="font-weight:700; margin-bottom:6px;">Site detectado</div>
-    <span id="siteTag" class="badge">—</span>
-  </section>
-
-  <section class="card" id="cardCdu" style="margin-bottom:12px">
-    <div style="font-weight:700; margin-bottom:6px;">CDU detectado</div>
-    <span id="cduTag" class="badge">—</span>
-  </section>
-
-  <section class="card">
-    <div style="font-weight:700; margin-bottom:6px;">Fuente remota</div>
-    <div class="row">
-      <input id="remoteUrl" type="text" placeholder="Pega la URL del Web App (…/exec) o JSON público" />
-    </div>
-    <div class="row" style="margin-top:6px">
-      <button id="loadUrl" class="primary">Actualizar</button>
-      <button id="saveUrl" class="secondary">Guardar</button>
-      <button id="editUrl" class="ghost" style="display:none">Editar</button>
-      <button id="openUrl" class="ghost">Abrir</button>
-    </div>
-    <div class="divider"></div>
-    <div class="row">
-      <input id="search" type="text" placeholder="Buscar fragmento o atajo…" />
-    </div>
-  </section>
-
-  <section style="margin-top:12px;">
-    <div class="list" id="snippets"></div>
-    <div class="empty" id="empty" style="display:none;">No hay fragmentos cargados todavía.</div>
-  </section>
-
-  <div id="toast" class="toast"></div>
+  </div>
 
   <script src="popup.js"></script>
 </body>

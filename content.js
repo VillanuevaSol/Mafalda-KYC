@@ -1,11 +1,11 @@
-/** content.js — FOSXpress v3.7.1 (VERSIÓN FUSIONADA Y CORREGIDA V2)
- * - BASE: Tu versión robusta y funcional en Checker (v3.7.1)
- * - CORRECCIÓN: Se reincorporan las funciones 'findMafInInput' y 'findMafInEditable' que se habían perdido en la fusión anterior.
- * - MODIFICADO: Se adapta la llamada al Asistente IA ("maf") para que recolecte URLs de documentos y se comunique con el nuevo background.js,
- * habilitando así el análisis con OCR sin perder la funcionalidad original.
+/** content.js — FOSXpress v3.7.3 (VERSIÓN CORREGIDA Y SIN LISTADO DE DOCS)
+ * - Mantiene tu lógica completa.
+ * - Conteo correcto de documentos (antes y después de analizar).
+ * - Recolección robusta de URLs (href/src/data, data-src, data-url, background-image).
+ * - Sin “Ver documentos analizados”.
  */
 
-console.log("[FOSXpress] content script v3.7.1 FUSIONADO-CORREGIDO loaded");
+console.log("[FOSXpress] content script v3.7.3 CORREGIDO loaded");
 
 /* ================ Silenciar SOLO el error de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
@@ -65,7 +65,6 @@ try {
 } catch (_) { snippetsCache = {}; rebuildSnipIndex(); }
 
 /* ========================== Utilidades ========================== */
-// Macros: {{date}}, {{date+N}}, {{date-N}}, {{time}}
 function expandStaticMacros(t) {
   const now = new Date();
   const fmtDate = (d) => d.toISOString().slice(0,10);
@@ -80,10 +79,8 @@ function expandStaticMacros(t) {
   return out;
 }
 
-// /atajo antes de espacio o fin, evitando '://', '//'
 const RE_SHORTCUT_NEAR_CARET = /(?<![:/])\/[a-zA-Z0-9_-]+(?=\s|$)/g;
 
-// Placeholders
 function parsePlaceholders(tpl){
   const tokens=[]; const re=/\{\{(select:([^}|]+)\|([^}]+)|input:([^}|]+)(?:\|([^}]*))?)\}\}/g; let m;
   while((m=re.exec(tpl))){
@@ -93,35 +90,25 @@ function parsePlaceholders(tpl){
   return tokens;
 }
 function hasPlaceholders(tpl){ return /\{\{(select:|input:)/.test(tpl); }
-
-// Snippet de mail?
 function isMailSnippet(value){
   return value && typeof value === "object" && (value.subject || value.body);
 }
-
-// Escapes para preview HTML
 function escapeHTML(s){
   return String(s)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
 }
-
-// Render con highlight
 function renderFilled(tpl, valueMap, {highlight=false} = {}){
   const src = expandStaticMacros(tpl);
   const re = /\{\{(select:([^}|]+)\|[^}]+|input:([^}|]+)(?:\|[^}]*)?)\}\}/g;
-
   let plain = "", html = "";
   let lastIndex = 0, m;
-
   while ((m = re.exec(src))) {
     const before = src.slice(lastIndex, m.index);
     plain += before;
     html  += escapeHTML(before);
-
     const label = (m[2] || m[3] || "").trim();
     const val = valueMap[label] ?? "";
-
     plain += val;
     html  += highlight ? `<span class="hl" data-label="${escapeHTML(label)}">${escapeHTML(val)}</span>` : escapeHTML(val);
     lastIndex = re.lastIndex;
@@ -129,13 +116,10 @@ function renderFilled(tpl, valueMap, {highlight=false} = {}){
   const tail = src.slice(lastIndex);
   plain += tail;
   html  += escapeHTML(tail);
-
   plain = plain.replace(/\s+([,.;:!?])/g, "$1");
   html  = html.replace(/\s+([,.;:!?])(?![^<]*>)/g, "$1");
   return { plain, html };
 }
-
-/* ===== Eventos sintéticos para sincronizar con React/SPA ===== */
 function emitInputLike(el){
   try {
     if (typeof InputEvent !== "undefined") {
@@ -167,8 +151,6 @@ function getEditableRootFromNode(node){
   while (el && !el.isContentEditable) el = el.parentElement;
   return el || document.activeElement || document.body;
 }
-
-/* ========================== Detección & reemplazo de atajos ========================== */
 function findShortcutInInput(el){
   const start=el.selectionStart, end=el.selectionEnd, text=el.value;
   const left=text.slice(0,start).replace(/\s+$/,"");
@@ -182,16 +164,13 @@ function insertAtInput(ctx, finalText){
   const caret=(before+finalText).length; ctx.el.setSelectionRange(caret,caret);
   emitInputLike(ctx.el);
 }
-
 function findShortcutInEditable(){
   const sel=window.getSelection(); if(!sel||!sel.rangeCount) return null;
   const caret=sel.getRangeAt(0), probe=caret.cloneRange(); probe.collapse(true); probe.setStart(probe.startContainer,0);
   const left=probe.toString().replace(/\s+$/,"");
   let last=null,m; while((m=RE_SHORTCUT_NEAR_CARET.exec(left))!==null) last=m; RE_SHORTCUT_NEAR_CARET.lastIndex=0;
   if(!last) return null;
-
   const shortcut=last[0], del=caret.cloneRange(); let node=caret.startContainer, off=caret.startOffset, remain=shortcut.length;
-
   function prevTextNodeIter(n){
     function prev(x){
       if(!x) return null;
@@ -206,7 +185,6 @@ function findShortcutInEditable(){
     while(p && p.nodeType!==Node.TEXT_NODE) p = prev(p);
     return p;
   }
-
   while(remain>0 && node){
     if(node.nodeType===Node.TEXT_NODE){
       const take=Math.min(off,remain);
@@ -228,11 +206,7 @@ function insertAtEditable(ctx, finalText){
   const root = getEditableRootFromNode(tn);
   emitInputLike(root);
 }
-
-
-/* === Helper v4 (anclado en ctx.del): Reemplaza TODO lo previo al caret por finalText sin depender de la selección activa (dialog) === */
 function replaceBeforeCaret(ctx, finalText){
-  // INPUT/TEXTAREA
   try{
     if (ctx && ctx.kind === "input" && ctx.el) {
       const el = ctx.el;
@@ -245,50 +219,36 @@ function replaceBeforeCaret(ctx, finalText){
       return;
     }
   }catch(_){}
-
-  // CONTENTEDITABLE usando el rango original (ctx.del) como ancla
   try{
     if (!ctx || ctx.kind !== "editable" || !ctx.del) return;
     const root = getEditableRootFromNode(ctx.del.startContainer) || document.activeElement || document.body;
     if (!root.contains(ctx.del.startContainer)) return;
-
-    // Insertamos un marcador en el punto exacto donde estaba "maf"
     const marker = document.createElement("span");
     marker.setAttribute("data-maf-anchor","1");
     marker.style.cssText = "display:inline-block;width:0;height:0;overflow:hidden;";
     try { ctx.del.insertNode(marker); } catch(_){ return; }
-
-    // Borramos TODO lo anterior al marcador dentro del root editable
     const wipe = document.createRange();
     wipe.setStart(root, 0);
     try { wipe.setEndBefore(marker); } catch(_){ wipe.setEnd(root, 0); }
     wipe.deleteContents();
-
-    // Reemplazamos el marcador por el texto final
     const tn = document.createTextNode(String(finalText));
     marker.replaceWith(tn);
-
-    // Dejamos el caret al final
     const sel = window.getSelection();
     if (sel) {
       const r = document.createRange();
       r.setStart(tn, tn.length); r.setEnd(tn, tn.length);
       sel.removeAllRanges(); sel.addRange(r);
     }
-
     emitInputLike(root);
   }catch(_){}
 }
-/* ========================== UI: diálogo de placeholders ========================== */
 const ML={yellow:"#FFE600",blue:"#3483FA",border:"#E6E6E6",dark:"#333"};
 let shadowHost=null, dialogOpen=false;
-
 function ensureDialog(){
   if(shadowHost) return shadowHost;
   shadowHost=document.createElement("div");
   shadowHost.style.position="fixed"; shadowHost.style.inset="0"; shadowHost.style.zIndex="2147483647";
   const shadow=shadowHost.attachShadow({mode:"open"}); document.documentElement.appendChild(shadowHost);
-
   shadow.innerHTML=`
     <style>
       :host { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
@@ -305,7 +265,7 @@ function ensureDialog(){
       input:focus, select:focus{ border-color:${ML.blue}; box-shadow:0 0 0 3px rgba(52,131,250,.12) }
       .prevCard{ border:1px solid ${ML.border}; border-radius:12px; padding:10px; background:#fff; display:flex; flex-direction:column; gap:8px }
       .prev{ white-space:pre-wrap; overflow:auto; min-height:180px; max-height:44vh }
-      .prev .hl{ background:#FFF59D; border-radius:4px; padding:0 2px; }
+      .prev .hl{ background: #FFF59D; border-radius:4px; padding:0 2px; }
       .actions{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px }
       .btnRow{ display:flex; gap:8px }
       .btn{ border-radius:10px; padding:9px 14px; font-weight:800; cursor:pointer; font-size:13px }
@@ -338,14 +298,11 @@ function ensureDialog(){
   `;
   return shadowHost;
 }
-
 function showToast(msg){
   const t = shadowHost.shadowRoot.querySelector("#toast");
   t.textContent = msg; t.style.display="block";
   clearTimeout(showToast._t); showToast._t = setTimeout(()=>{ t.style.display="none"; }, 1600);
 }
-
-/* ===== chrome.storage helpers ===== */
 function storageGetLocal(key, def=null){
   return new Promise(resolve=>{
     try{
@@ -375,16 +332,12 @@ async function storageGetSafe(key, def=null){
   if (v1 !== undefined && v1 !== null) return v1;
   return storageGetLocal(key, def);
 }
-
-/* ===== Guarda/lee últimos valores por atajo ===== */
 async function getLastValues(shortcut){
   return storageGetLocal(`fx:last:${shortcut}`, null);
 }
 function setLastValues(shortcut, values){
   storageSetLocal({[`fx:last:${shortcut}`]: values});
 }
-
-/* ===== Abre el diálogo, devuelve string final o null ===== */
 async function openDialog(tpl, shortcut){
   ensureDialog();
   const sh = shadowHost.shadowRoot;
@@ -394,11 +347,8 @@ async function openDialog(tpl, shortcut){
   const ok = sh.querySelector("#ok");
   const cancel = sh.querySelector("#cancel");
   const copyBtn = sh.querySelector("#copy");
-
   const tokens = parsePlaceholders(tpl);
   const last = await getLastValues(shortcut);
-
-  // Unificar por etiqueta
   const seen = new Map();
   const state = [];
   for (const t of tokens) {
@@ -410,7 +360,6 @@ async function openDialog(tpl, shortcut){
     state.push({ type: t.type, label: t.label, options: t.options, raw: t.raw, value });
     seen.set(key, true);
   }
-
   function renderPrev(){
     const valueMap = {};
     for (const s of state) valueMap[s.label] = s.value ?? "";
@@ -420,7 +369,6 @@ async function openDialog(tpl, shortcut){
       prev.dataset.plain = plain;
     }
   }
-
   fields.innerHTML="";
   state.forEach(s=>{
     const w=document.createElement("div"); w.className="field";
@@ -440,17 +388,13 @@ async function openDialog(tpl, shortcut){
     }
     fields.appendChild(w);
   });
-
   prev.textContent=""; prev.removeAttribute("data-manual");
   prev.addEventListener("input",()=>prev.setAttribute("data-manual","1"));
   renderPrev();
-
   let resolvePromise;
   let internalClose = false;
-
   const ac = new AbortController();
   const { signal } = ac;
-
   const done = (val)=>{
     try { internalClose = true; dlg.close(); } catch(_){}
     if (shadowHost?.isConnected) shadowHost.style.display="none";
@@ -458,7 +402,6 @@ async function openDialog(tpl, shortcut){
     ac.abort();
     resolvePromise?.(val);
   };
-
   const trapDoc = (e)=>{
     if (!dialogOpen) return;
     if (shadowHost && shadowHost.contains(e.target)) return;
@@ -466,14 +409,12 @@ async function openDialog(tpl, shortcut){
   };
   document.addEventListener("keydown", trapDoc, { capture:true, signal });
   document.addEventListener("input",  trapDoc, { capture:true, signal });
-
   dlg.addEventListener("cancel", (e)=>{ e.preventDefault(); }, { signal });
   dlg.addEventListener("close", () => {
     if (dialogOpen && !internalClose) {
       try { dlg.showModal(); } catch(_){}
     }
   }, { signal });
-
   copyBtn.onclick = async ()=>{
     const plain = prev.dataset.plain || prev.textContent || "";
     try { await navigator.clipboard.writeText(plain); showToast("Copiado ✅"); done(null); }
@@ -486,26 +427,18 @@ async function openDialog(tpl, shortcut){
     done(plain);
   };
   cancel.onclick = ()=> done(null);
-
   shadowHost.style.display="block"; dialogOpen=true;
   dlg.showModal();
-
   const focusables = sh.querySelectorAll("button, [href], input, select, [contenteditable='true']");
   (focusables[0] || ok).focus();
-
   return new Promise(res => (resolvePromise = res));
 }
-
-/* ==========================
-   Typeahead de atajos (/...)
-========================== */
 let taHost = null;
 let taOpen = false;
 let taSelIdx = -1;
 let taItems = [];
 let taTarget = null;
 let taCtxLast = null;
-
 function ensureTypeahead(){
   if (taHost) return taHost;
   taHost = document.createElement("div");
@@ -532,7 +465,6 @@ function ensureTypeahead(){
   document.documentElement.appendChild(taHost);
   return taHost;
 }
-
 function hideTypeahead(){
   if (!taHost) return;
   const sh = taHost.shadowRoot;
@@ -543,17 +475,14 @@ function hideTypeahead(){
   taItems = [];
   taTarget = null;
 }
-
 function renderTypeahead(items, anchorRect){
   ensureTypeahead();
   const sh = taHost.shadowRoot;
   const box = sh.getElementById("box");
-
   const top = Math.round((anchorRect.bottom || (anchorRect.top + 20)) + 6 + scrollY);
   const left = Math.round((anchorRect.left || 16) + scrollX);
   taHost.style.top = `${top}px`;
   taHost.style.left = `${left}px`;
-
   box.innerHTML = "";
   if (!items.length) {
     box.innerHTML = `<div class="empty">Sin resultados</div>`;
@@ -562,7 +491,6 @@ function renderTypeahead(items, anchorRect){
       const div = document.createElement("div");
       div.className = "item" + (i === taSelIdx ? " active" : "");
       div.innerHTML = `<span class="kbd">${i<9 ? (i+1)+'.' : '&bull;'}</span> <span>${k}</span>`;
-
       const handler = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
@@ -571,22 +499,18 @@ function renderTypeahead(items, anchorRect){
       div.addEventListener("pointerdown", handler);
       div.addEventListener("mousedown", handler);
       div.addEventListener("click", handler);
-
       box.appendChild(div);
     });
   }
-
   box.hidden = false;
   taOpen = true;
 }
-
 function filterSnippets(prefix){
   const q = String(prefix).toLowerCase();
   const starts = snipKeysOriginal.filter(k => k.toLowerCase().startsWith(q));
   const contains = snipKeysOriginal.filter(k => !k.toLowerCase().startsWith(q) && k.toLowerCase().includes(q));
   return [...starts, ...contains].slice(0,7);
 }
-
 function currentAnchorRect(target){
   try {
     if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
@@ -601,16 +525,13 @@ function currentAnchorRect(target){
   } catch(_) {}
   return (target?.getBoundingClientRect?.()) || { top: 20, bottom: 40, left: 20 };
 }
-
 function selectTypeahead(idx){
   if (!taOpen || idx<0 || idx>=taItems.length) return;
   const chosen = taItems[idx];
   const t = taTarget;
   if (!t) { hideTypeahead(); return; }
-
   const ctx = taCtxLast || ((t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable());
   if (!ctx) { hideTypeahead(); return; }
-
   const finalText = chosen;
   if (ctx.kind === "input") {
     const before=ctx.original.slice(0,ctx.from), after=ctx.original.slice(ctx.to)+ctx.right;
@@ -625,16 +546,13 @@ function selectTypeahead(idx){
     r.setStart(tn,finalText.length); r.setEnd(tn,finalText.length);
     ctx.sel.addRange(r);
   }
-
   try {
     const ev = new Event("input", { bubbles:true, cancelable:true });
     t.dispatchEvent(ev);
   } catch(_){}
-
   taCtxLast = null;
   hideTypeahead();
 }
-
 function handleTypeaheadKey(e){
   if (!taOpen) return false;
   if (e.key === "ArrowDown") { taSelIdx = Math.min(taSelIdx+1, taItems.length-1); }
@@ -645,8 +563,6 @@ function handleTypeaheadKey(e){
   renderTypeahead(taItems, currentAnchorRect(taTarget));
   return ["ArrowDown","ArrowUp","Enter","Tab","Escape"].includes(e.key) || (/^[1-9]$/.test(e.key));
 }
-
-/* ========================== Handler principal ========================== */
 function isEditableTarget(t){
   if(!t) return false;
   if (t.tagName === "TEXTAREA") return true;
@@ -662,8 +578,6 @@ function shouldTrigger(e){
   if (e.type==="keydown" && e.ctrlKey && e.key===" ") return true;
   return e.key===" " || e.key==="Enter" || e.key==="Tab" || e.type==="input";
 }
-
-/* ==== helpers para completar mails (Gmail / Outlook Web) ==== */
 function findEmailFields() {
   const d = document;
   const gmailSubject = d.querySelector('input[name="subjectbox"]') || d.querySelector('input[aria-label="Subject"]') || d.querySelector('textarea[aria-label="Subject"]') || d.querySelector('input[aria-label="Asunto"]') || d.querySelector('textarea[aria-label="Asunto"]');
@@ -687,24 +601,18 @@ function tryFillEmail(subjectText, bodyText) {
   if (bodyEl) setInputValue(bodyEl, bodyText);
   return true;
 }
-
 document.addEventListener("keydown", onEvent, true);
 document.addEventListener("keyup", onEvent, true);
 document.addEventListener("input", onEvent, true);
-
 async function onEvent(e){
   if(dialogOpen) return;
-
   if (taOpen) {
     const consumed = handleTypeaheadKey(e);
     if (consumed) { e.preventDefault?.(); e.stopPropagation?.(); return; }
   }
-
   const t=e.target;
   if(!isEditableTarget(t)) return;
   if(!shouldTrigger(e)) return;
-
-  // 0) Asistente "maf": si detecto el token, manejo acá y corto
   if (e.key === " " || e.key === "Enter" || e.key === "Tab" || (e.type==="keydown" && e.ctrlKey && e.key===" ")) {
     if (maybeHandleMaf(e)) {
       e.preventDefault?.();
@@ -712,16 +620,11 @@ async function onEvent(e){
       return;
     }
   }
-
-  // ----- flujo de snippets -----
   const ctx = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
   if(!ctx) { hideTypeahead(); return; }
-
-  // Typeahead
   if (!dialogOpen && ctx && ctx.shortcut) {
     const prefix = String(ctx.shortcut);
     taTarget = t;
-
     if (!prefix.startsWith("/") || prefix.length < 2) {
       hideTypeahead();
     } else {
@@ -736,27 +639,22 @@ async function onEvent(e){
       }
     }
   }
-
   if(e.key===" "||e.key==="Enter"||e.key==="Tab"){ e.preventDefault?.(); e.stopPropagation?.(); }
-
   const tplRaw = snipIndex.get(String(ctx.shortcut).toLowerCase());
   if(!tplRaw) return;
-
   hideTypeahead();
-
-  /* ===== Snippet de MAIL {subject, body} ===== */
   if (isMailSnippet(tplRaw)) {
     const subjTpl = String(tplRaw.subject || "");
     const bodyTpl = String(tplRaw.body || "");
     const hasPh = hasPlaceholders(subjTpl) || hasPlaceholders(bodyTpl);
-
     if (!hasPh) {
       const subjectFinal = expandStaticMacros(subjTpl);
       const bodyFinal    = expandStaticMacros(bodyTpl);
       const filled = tryFillEmail(subjectFinal, bodyFinal);
       if (!filled) {
         const fallback = `ASUNTO: ${subjectFinal}\n\n${bodyFinal}`;
-        if(ctx.kind==="input") insertAtInput(ctx, fallback); else insertAtEditable(ctx, fallback);
+        const ctx2 = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
+        if(ctx2?.kind==="input") insertAtInput(ctx2, fallback); else if(ctx2) insertAtEditable(ctx2, fallback);
       }
       toastQuick("Mail completado ✅");
       return;
@@ -765,51 +663,44 @@ async function onEvent(e){
       const composite = subjTpl + SEP + bodyTpl;
       const finalComposite = await openDialog(composite, ctx.shortcut);
       if (finalComposite == null) return;
-
       const parts = String(finalComposite).split(SEP);
       const subjectFinal = (parts[0] || "").trim();
       const bodyFinal    = (parts.slice(1).join(SEP) || "").trim();
-
       const filled = tryFillEmail(subjectFinal, bodyFinal);
       if (!filled) {
         const fallback = `ASUNTO: ${subjectFinal}\n\n${bodyFinal}`;
-        if(ctx.kind==="input") insertAtInput(ctx, fallback); else insertAtEditable(ctx, fallback);
+        const ctx2 = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
+        if(ctx2?.kind==="input") insertAtInput(ctx2, fallback); else if(ctx2) insertAtEditable(ctx2, fallback);
       }
       toastQuick("Mail completado ✅");
       return;
     }
   }
-
-  /* ===== Caso normal (string) ===== */
   if(!hasPlaceholders(tplRaw)){
     const final = expandStaticMacros(tplRaw);
-    if(ctx.kind==="input") insertAtInput(ctx, final); else insertAtEditable(ctx, final);
+    const ctx2 = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
+    if(ctx2?.kind==="input") insertAtInput(ctx2, final); else if(ctx2) insertAtEditable(ctx2, final);
     toastQuick("Snippet insertado ✅");
     return;
   }
-
   const finalText = await openDialog(tplRaw, ctx.shortcut);
   if(finalText == null) return;
-  if(ctx.kind==="input") insertAtInput(ctx, finalText); else insertAtEditable(ctx, finalText);
+  const ctx2 = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
+  if(ctx2?.kind==="input") insertAtInput(ctx2, finalText); else if(ctx2) insertAtEditable(ctx2, finalText);
   toastQuick("Snippet insertado ✅");
 }
-
-/* ========================== Util: toast rápido ========================== */
 function toastQuick(msg){
   try{ const d=document.createElement("div");
     d.textContent=msg; d.style.cssText="position:fixed;bottom:18px;right:18px;background:#1f2937;color:#fff;padding:10px 14px;border-radius:10px;font-size:13px;z-index:2147483647;opacity:.98";
     document.body.appendChild(d); setTimeout(()=>d.remove(),1500);
   }catch(_){}
 }
-
-/* ========================== Estabilidad & Limpieza ========================== */
 function cleanupAll(){
   hideTypeahead();
   if (shadowHost?.isConnected) { try { shadowHost.remove(); } catch(_) {} }
   dialogOpen = false;
 }
 addEventListener("pagehide", cleanupAll);
-
 function attachCoreListeners(){
   document.addEventListener("keydown", onEvent, true);
   document.addEventListener("keyup", onEvent, true);
@@ -829,7 +720,6 @@ addEventListener("focus", attachCoreListeners);
 /* ===================================================================== */
 /* =================== Detección de "Nombre del challenge" ==============*/
 /* ===================================================================== */
-
 const RE_CHALLENGE = /\b(backoffice_[a-z0-9_]+)(?=$|\s|[^\w])/i;
 function cleanChallengeToken(val){ return val ? String(val).trim().replace(/fecha$/i, '') : val; }
 function publishDetectedChallenge(value){
@@ -894,7 +784,6 @@ ensureChallengeObserver();
 /* ===================================================================== */
 /* =================== Detección de SITE (país: MLA/MLB/…) ==============*/
 /* ===================================================================== */
-
 const RE_SITE = /\b(MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/;
 function publishDetectedSite(value){
   const v = value ? String(value).toUpperCase() : null;
@@ -945,6 +834,8 @@ ensureSiteObserver();
 /* ===================================================================== */
 /* ======================= Gatillo "maf" + Panel IA ====================== */
 /* ===================================================================== */
+
+const MAX_DOCS = 3; // Límite de documentos a procesar
 
 /** Detecta el token "maf" en <input>/<textarea> y devuelve contexto */
 function findMafInInput(el){
@@ -1016,7 +907,7 @@ function removeMafToken(ctx){
   }
 }
 
-/* === NUEVO: normalizador de URL de Apps Script === */
+/* === normalizador de URL de Apps Script === */
 function normalizeAppsScriptUrl(u){
   if (!u) return u;
   return String(u).replace(
@@ -1025,137 +916,173 @@ function normalizeAppsScriptUrl(u){
   );
 }
 
-// *** INICIO DE LA SECCIÓN MODIFICADA PARA COMPATIBILIDAD CON OCR ***
-
 const isPDF = (u) => /\.pdf(\?|$)/i.test(u || "");
 const isIMG = (u) => /\.(png|jpe?g|bmp|webp|tif?f)(\?|$)/i.test(u || "");
 const isDocUrl = (u) => isPDF(u) || isIMG(u);
-const MAX_DOCS = 8;
 
+/* --------- RECOLECCIÓN ROBUSTA DE URLS (PDF + imágenes) --------- */
 function collectUrlsHere() {
-    const urls = new Set();
-    document.querySelectorAll('a[href], img[src], source[src], track[src], embed[src], object[data], iframe[src]').forEach(el => {
-      const urlAttr = el.getAttribute('href') || el.getAttribute('src') || el.getAttribute('data');
-      if (!urlAttr) return;
-      try {
-        const abs = new URL(urlAttr, location.href).href;
-        if (isDocUrl(abs)) urls.add(abs);
-      } catch {}
-    });
+  const urls = new Set();
 
-    const arr = Array.from(urls);
-    const seen = new Set();
-    const clean = [];
-    for (const u of arr) {
-      const key = u.replace(/[?#].*$/, "");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      clean.push(u);
-      if (clean.length >= MAX_DOCS) break;
-    }
-    console.log("[Mafalda] Documentos detectados para OCR:", clean);
-    return clean;
+  // href/src/data
+  document.querySelectorAll('a[href], img[src], source[src], track[src], embed[src], object[data], iframe[src]').forEach(el => {
+    const urlAttr = el.getAttribute('href') || el.getAttribute('src') || el.getAttribute('data');
+    if (!urlAttr) return;
+    try {
+      const abs = new URL(urlAttr, location.href).href;
+      if (isDocUrl(abs)) urls.add(abs);
+    } catch {}
+  });
+
+  // lazy attrs
+  document.querySelectorAll('[data-src], [data-url]').forEach(el => {
+    const u = el.getAttribute('data-src') || el.getAttribute('data-url');
+    if (!u) return;
+    try {
+      const abs = new URL(u, location.href).href;
+      if (isDocUrl(abs)) urls.add(abs);
+    } catch {}
+  });
+
+  // background-image inline
+  document.querySelectorAll('[style*="background-image"]').forEach(el => {
+    const m = String(el.getAttribute('style') || "").match(/background-image\s*:\s*url\((["']?)(.*?)\1\)/i);
+    const u = m && m[2];
+    if (!u) return;
+    try {
+      const abs = new URL(u, location.href).href;
+      if (isDocUrl(abs)) urls.add(abs);
+    } catch {}
+  });
+
+  // dedupe por URL sin query y limit
+  const arr = Array.from(urls);
+  const seen = new Set();
+  const clean = [];
+  for (const u of arr) {
+    const key = u.replace(/[?#].*$/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    clean.push(u);
+    if (clean.length >= MAX_DOCS) break;
+  }
+  console.log(`[Mafalda] ${clean.length} documentos detectados para análisis:`, clean);
+  return clean;
 }
 
 /** Llama al background para que haga el fetch a Apps Script (evita CORS) */
-async function analyzeWithAI(freeText){
-  // 1. Obtener contexto (CDU/SITE) y URL remota
+async function analyzeWithAI(freeText, docUrls){
   const cdu  = await storageGetSafe("maf_challenge", null) || mafCurrentChallenge;
   const site = await storageGetSafe("maf_site", null) || mafCurrentSite;
   const remoteRaw = await storageGetLocal("remote_url", "");
   const remote = normalizeAppsScriptUrl(remoteRaw || "");
   if(!remote) throw new Error('Falta configurar la "Fuente remota" en el popup');
 
-  // 2. NUEVO: Recolectar URLs de documentos de la página
-  const docUrls = collectUrlsHere();
-
-  // 3. NUEVO: Enviar mensaje al background.js
   return await new Promise((resolve, reject) => {
     try {
-      // Usamos el mensaje esperado por el nuevo background script: "maf:ai_analyze_with_docs"
       chrome.runtime.sendMessage(
-        {
-          type: "maf:ai_analyze_with_docs",
-          remoteUrl: remote,
-          text: freeText,
-          cdu: cdu || null,
-          site: site || null,
-          docUrls: docUrls
-        },
+        { type: "maf:ai_analyze_with_docs", remoteUrl: remote, text: freeText, cdu: cdu || null, site: site || null, docUrls },
         (res) => {
           if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
           if (!res || res.ok === false) return reject(new Error(res?.error || "No se pudo analizar el texto."));
-          resolve(res.data);
+          resolve(res.data); // incluye docMeta y docCount
         }
       );
-    } catch (e) {
-      reject(e);
-    }
+    } catch (e) { reject(e); }
   });
 }
 
-/** Panel con estilo Mafalda (similar al mock) */
-function openMafPanel(freeText, ctxForInsert){
+/** Panel con estilo Mafalda (sin listado de documentos) */
+function openMafPanel(freeText, ctxForInsert, docUrls){
   const host = document.createElement("div");
   host.style.position="fixed"; host.style.inset="0"; host.style.zIndex="2147483647";
   const sh = host.attachShadow({mode:"open"});
   document.documentElement.appendChild(host);
 
-  sh.innerHTML = `
-    <style>
-      :host{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-      dialog{border:none;border-radius:18px;width:min(920px,96vw);padding:0}
-      dialog::backdrop{background:rgba(0,0,0,.25)}
-      .wrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}
-      .col{display:flex;flex-direction:column;gap:12px}
-      .card{background:#fff;border:1px solid #E6E6E6;border-radius:14px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-      .title{font-weight:800;margin-bottom:6px}
-      .muted{color:#666;font-size:12px}
-      .caseBox{min-height:120px;max-height:260px;overflow:auto;white-space:pre-wrap}
-      .detectedBox{min-height:90px}
-      .ok{color:#0a7b20;font-weight:700}
-      .bad{color:#b00020;font-weight:700}
-      .finalBox{min-height:260px;max-height:420px;overflow:auto;white-space:pre-wrap}
-      .finalEdit[contenteditable="true"]{outline:none;border:1px dashed #E6E6E6;border-radius:10px;padding:10px;background:#fafafa}
-      .row{display:flex;gap:8px;justify-content:flex-end}
-      .btn{border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer;font-size:13px}
-      .ghost{background:#fff;color:#333;border:1px solid #E6E6E6}
-      .okbtn{background:#3483FA;color:#fff;border:none}
-      .close{position:absolute;right:10px;top:10px;border:none;background:#fff;border-radius:8px;padding:6px 9px;cursor:pointer}
-      .hdr{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #EFEFEF}
-      .hdr h3{margin:0;font-size:16px}
-      .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ddd;border-top-color:#3483FA;border-radius:50%;animation:sp 1s linear infinite;margin-right:6px}
-      @keyframes sp{to{transform:rotate(360deg)}}
+  sh.innerHTML = `<style>
+      @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap');
+      :root{
+        --azul:#283277; --meli:#FFC800; --ink:#333333;
+        --azul-12: rgba(40,50,119,.12);
+        --azul-18: rgba(40,50,119,.18);
+        --azul-30: rgba(40,50,119,.30);
+      }
+      :host{ font-family:'Rubik',system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--ink); }
+      dialog{ border:none; border-radius:18px; width:min(800px, 96vw); padding:0; }
+      dialog::backdrop{ background:rgba(0,0,0,.3) }
+      .shell{ border-radius:18px; background:#fff; box-shadow:0 12px 34px rgba(0,0,0,.14); overflow:hidden; display:flex; flex-direction:column; max-height:84vh; }
+      /* HEADER AZUL VISIBLE */
+      .head{ background:#283277; color:#fff; padding:10px 16px; display:flex; align-items:center; gap:10px; }
+      .brand{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:8px; background:linear-gradient(180deg, rgba(255,200,0,.16), rgba(255,200,0,.07)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.25) }
+      .title{ font-size:16px; font-weight:800; margin:0 }
+      
+      .content{ display:grid; grid-template-columns: 230px 1fr; flex:1; overflow:hidden; background:#fff; }
+      .left{ border-right:1px solid var(--azul-18); display:flex; flex-direction:column; overflow:auto; }
+      .cell{ padding:14px 16px; }
+      .cell + .cell{ border-top:1px solid var(--azul-18); }
+      h3.h{ margin:0 0 8px 0; font-size:18px; font-weight:800; color:#283277 }
+      .muted{ color:#657084; font-size:12px; font-weight:400 }
+
+      .box{ background:linear-gradient(180deg,#fff,#fafafa); border:1px solid var(--azul-18); border-radius:14px; padding:12px; color:#0f172a; white-space:pre-wrap; }
+      .case{ min-height:80px; }
+      .det  { min-height:80px; }
+      .final{ min-height:180px; max-height:calc(66vh - 140px); overflow:auto; }
+
+      .right{ display:flex; flex-direction:column; overflow:hidden; }
+      .right-inner{ padding:16px; display:flex; flex-direction:column; height:100%; }
+
+      /* BOTONES: asegurar visibilidad del ENVIAR */
+      .row-actions{ display:flex; gap:12px; justify-content:flex-end; padding-top:12px; }
+      .btn{ display:inline-flex; align-items:center; gap:8px; font-weight:800; font-size:14px; border-radius:14px; padding:10px 16px; cursor:pointer; }
+      .btn.copy{ color:#283277; background:#fff; border:1px solid var(--azul-30); }
+      .btn.insert{ color:#fff !important; background:#283277 !important; border:1px solid #283277 !important; box-shadow:0 1px 0 rgba(0,0,0,.05); }
+
+      .close{ position:absolute; right:12px; top:12px; border:none; background:#fff; border-radius:10px; padding:6px 9px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.06) }
+      .spinner{ display:inline-block; width:14px; height:14px; border:2px solid var(--azul-18); border-top-color:#283277; border-radius:50%; animation:sp 1s linear infinite; margin-right:6px }
+      @keyframes sp{ to{ transform:rotate(360deg) } }
     </style>
     <dialog>
-      <div class="hdr">
-        <h3>Asistente de respuesta</h3>
-        <button class="close" title="Cerrar">✕</button>
-      </div>
-      <div class="wrap">
-        <div class="col">
-          <div class="card">
-            <div class="title">Mensaje final al usuario</div>
-            <div id="final" class="finalEdit finalBox" contenteditable="true">Generando recomendación…</div>
-            <div class="row" style="margin-top:8px">
-              <button id="copy" class="btn ghost">copiar</button>
-              <button id="insert" class="btn okbtn">insertar</button>
+      <button class="close" title="Cerrar">✕</button>
+      <section class="shell" role="dialog" aria-label="Mafalda">
+        <header class="head">
+          <span class="brand" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M4 11c0-4.4 3.6-8 8-8s8 3.6 8 8v3H4v-3z" fill="#333"/>
+              <g transform="translate(12 6)"><circle cx="0" cy="0" r="1" fill="#E94B4B"/><path d="M-1 0c-1.2-.2-2 .7-2 1.6 0 .7.6 1.4 1.3 1.2L0 .6z" fill="#E94B4B"/><path d="M1 0c1.2-.2 2 .7 2 1.6 0 .7-.6 1.4-1.3 1.2L0 .6z" fill="#E94B4B"/></g>
+            </svg>
+          </span>
+          <h2 class="title">Mafalda</h2>
+        </header>
+
+        <div class="content">
+          <!-- IZQUIERDA -->
+          <div class="left">
+            <div class="cell">
+              <h3 class="h">Texto del caso <span id="docCount" class="muted"></span></h3>
+              <div id="case" class="box case"></div>
+            </div>
+            <div class="cell">
+              <h3 class="h">Casuística detectada</h3>
+              <div id="detected" class="box det"><span class="spinner"></span>Analizando…</div>
+            </div>
+          </div>
+
+          <!-- DERECHA -->
+          <div class="right">
+            <div class="right-inner">
+              <div style="padding-bottom:8px">
+                <h3 class="h">Mensaje final al usuario</h3>
+              </div>
+              <div id="final" class="box final" contenteditable="true"><span class="spinner"></span>Generando…</div>
+              <div class="row-actions">
+                <button id="copy" class="btn copy">📋 copiar</button>
+                <button id="insert" class="btn insert">✉️ enviar</button>
+              </div>
             </div>
           </div>
         </div>
-        <div class="col">
-          <div class="card">
-            <div class="title">Texto del caso</div>
-            <div id="case" class="caseBox"></div>
-          </div>
-          <div class="card">
-            <div class="title">Casuística detectada</div>
-            <div id="detected" class="detectedBox"><span class="spinner"></span>Analizando…</div>
-          </div>
-        </div>
-      </div>
-    </dialog>
-  `;
+      </section>
+    </dialog>`;
 
   const dlg       = sh.querySelector("dialog");
   const btnClose  = sh.querySelector(".close");
@@ -1164,36 +1091,39 @@ function openMafPanel(freeText, ctxForInsert){
   const caseEl    = sh.querySelector("#case");
   const detEl     = sh.querySelector("#detected");
   const finalEl   = sh.querySelector("#final");
+  const docCountEl= sh.querySelector("#docCount");
 
+  // Mostrar candidatos detectados antes del análisis
   caseEl.textContent = freeText || "(vacío)";
+  docCountEl.textContent = `${docUrls.length} documento(s) candidato(s)`;
 
   function close(){ try{ dlg.close(); }catch(_){ } host.remove(); }
-
   btnClose.onclick = close;
-  btnCopy.onclick = async ()=>{ try{ await navigator.clipboard.writeText(finalEl.innerText || ""); }catch(_){ } };
-  btnIns.onclick = () => { const clean = (finalEl.innerText || "").trim(); if (!clean) return; replaceBeforeCaret(ctxForInsert, clean); close(); };
-
+  btnCopy.onclick  = async ()=>{ try{ await navigator.clipboard.writeText(finalEl.innerText || ""); }catch(_){ } };
+  btnIns.onclick   = () => { const clean = (finalEl.innerText || "").trim(); if (!clean) return; replaceBeforeCaret(ctxForInsert, clean); close(); };
   dlg.addEventListener("cancel", e=>e.preventDefault());
   dlg.showModal();
 
-  (async ()=>{
-    try{
-      const res = await analyzeWithAI(freeText);
-      const ok = !!res.isAllowed;
+  (async ()=> {
+    try {
+      const res = await analyzeWithAI(freeText, docUrls);
+
+      // Actualizamos contador real
+      const count = Number(res.docCount || (res.docMeta?.length || 0));
+      docCountEl.textContent = `${count} documento(s) analizado(s)`;
+
       const items = Array.isArray(res.detected) ? res.detected : (res.detected ? [res.detected] : []);
-      detEl.innerHTML = `
-        <div>${items.length ? items.map(x=>`• ${escapeHTML(String(x))}`).join("<br>") : "—"}</div>
-      `;
+      detEl.innerHTML = `<div>${items.length ? items.map(x=>`• ${escapeHTML(String(x))}`).join("<br>") : "—"}</div>`;
       if (res.improved) finalEl.textContent = res.improved;
       finalEl.focus();
-    }catch(e){
-      detEl.innerHTML = `<span class="bad">No se pudo analizar (${escapeHTML(String(e.message||e))})</span>`;
+    } catch (e) {
+      detEl.innerHTML = `<span style="color:#b00020;">No se pudo analizar (${escapeHTML(String(e.message||e))})</span>`;
       finalEl.textContent = "No pude generar la recomendación en este momento. Revisá la guía y redactá el mensaje para el usuario.";
     }
   })();
 }
 
-/** Hook al flujo de eventos existente: si aparece 'maf', abrimos el panel */
+/** Hook al flujo: si aparece 'maf', abrimos el panel */
 function maybeHandleMaf(e){
   const t = e.target;
   if (!isEditableTarget(t)) return false;
@@ -1203,7 +1133,11 @@ function maybeHandleMaf(e){
 
   const freeText = ctx.beforeText || "";
   removeMafToken(ctx);
-  openMafPanel(freeText, ctx);
+
+  // Recolectamos URLs justo antes de abrir el panel
+  const docUrls = collectUrlsHere();
+
+  openMafPanel(freeText, ctx, docUrls);
   return true;
 }
-  
+

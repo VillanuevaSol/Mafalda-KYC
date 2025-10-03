@@ -1,15 +1,15 @@
-// background.js — MV3 (type: module)
-// Usa pdf.min.js / pdf.worker.min.js / tesseract.min.js / tesseract.worker.min.js / tesseract-core.wasm desde libs/
+// background.js — VERSIÓN CORREGIDA (dynamic import, OCR/PDF, contador real + docMeta)
 
+/* Rutas de assets dentro del paquete */
 const URLS = {
-  pdfjs: chrome.runtime.getURL("libs/pdf.min.js"),
-  pdfWorker: chrome.runtime.getURL("libs/pdf.worker.min.js"),
-  tessMain: chrome.runtime.getURL("libs/tesseract.min.js"),
+  pdfjs:      chrome.runtime.getURL("libs/pdf.min.js"),
+  pdfWorker:  chrome.runtime.getURL("libs/pdf.worker.min.js"),
+  tessMain:   chrome.runtime.getURL("libs/tesseract.min.js"),
   tessWorker: chrome.runtime.getURL("libs/tesseract.worker.min.js"),
-  tessCore: chrome.runtime.getURL("libs/tesseract-core.wasm")
+  tessCore:   chrome.runtime.getURL("libs/tesseract-core.wasm"),
 };
 
-// ---------- PDF.js ----------
+/* ------------------------ PDF.js (carga dinámica) ------------------------ */
 let PDFJS_READY = null;
 async function ensurePDFJS() {
   if (PDFJS_READY) return PDFJS_READY;
@@ -24,43 +24,43 @@ async function ensurePDFJS() {
   return PDFJS_READY;
 }
 
-// ---------- Tesseract.js ----------
-let TESS_READY = null;
-async function ensureTesseract() {
-  if (TESS_READY) return TESS_READY;
-  TESS_READY = (async () => {
+/* ----------------------- Tesseract.js (dinámico) ------------------------- */
+const OCR_LANG = "spa+por+eng";
+let OCR_WORKER = null;
+let OCR_BOOT = null;
+const OCR_CACHE = new Map();
+
+async function ensureOCRWorker() {
+  if (OCR_BOOT) return OCR_WORKER ?? (await OCR_BOOT, OCR_WORKER);
+
+  OCR_BOOT = (async () => {
     const mod = await import(URLS.tessMain);
-    const Tesseract = mod.default || mod;
-    Tesseract.setLogging && Tesseract.setLogging(false);
-    return Tesseract;
+    const Tesseract = mod.default || mod; // UMD/ESM safe
+
+    const w = await Tesseract.createWorker({
+      workerPath: URLS.tessWorker,
+      corePath: URLS.tessCore,
+      logger: (m) =>
+        console.log(`[Tesseract] ${m.status}: ${((m.progress || 0) * 100).toFixed(2)}%`),
+    });
+    await w.loadLanguage(OCR_LANG);
+    await w.initialize(OCR_LANG);
+    await w.setParameters({
+      tessedit_pageseg_mode: Tesseract.PSM.AUTO_OSD,
+      tessjs_image_quality: 0.8,
+    });
+    OCR_WORKER = w;
+    console.log("[Tesseract] Worker listo.");
   })();
-  return TESS_READY;
+
+  await OCR_BOOT;
+  return OCR_WORKER;
 }
 
-// ---------- Helpers ----------
-function normalizeAppsScriptUrl(u) {
-  if (!u) return "";
-  return String(u).replace(
-    /https:\/\/script\.google\.com\/a\/macros\/[^/]+\/s\//,
-    "https://script.google.com/macros/s/"
-  );
-}
-
-async function postPlain(url, body) {
-  const r = await fetch(url, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(body || {})
-  });
-  const txt = await r.text();
-  if (!r.ok) throw new Error(`HTTP ${r.status} – ${txt.slice(0, 300)}`);
-  try { return JSON.parse(txt); } catch { throw new Error("Respuesta no es JSON"); }
-}
-
-function isPDF(url) { return /\.pdf(\?|$)/i.test(url); }
-function isImage(url) { return /\.(png|jpe?g|bmp|webp|tif?f)(\?|$)/i.test(url); }
+/* ------------------------------ Helpers --------------------------------- */
+const isPDF   = (u) => /\.pdf(\?|$)/i.test(String(u || ""));
+const isImage = (u) => /\.(png|jpe?g|bmp|webp|tif?f)(\?|$)/i.test(String(u || ""));
+const cleanUrlKey = (u) => String(u || "").replace(/[?#].*$/, "");
 
 async function fetchAsArrayBuffer(url) {
   const resp = await fetch(url, { credentials: "include", cache: "no-store" });
@@ -73,46 +73,90 @@ async function fetchAsBlob(url) {
   return await resp.blob();
 }
 
-// ---------- Extractores ----------
+function normalizeAppsScriptUrl(u) {
+  if (!u) return "";
+  return String(u).replace(
+    /https:\/\/script\.google\.com\/a\/macros\/[^/]+\/s\//,
+    "https://script.google.com/macros/s/"
+  );
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(`HTTP ${r.status} – ${txt.slice(0, 300)}`);
+  try { return JSON.parse(txt); } catch { throw new Error("Respuesta no es JSON"); }
+}
+async function mapWithLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      try { out[idx] = await fn(items[idx], idx); }
+      catch (e) { out[idx] = { url: items[idx], kind: "unknown", text: "", error: String(e?.message || e) }; }
+    }
+  });
+  await Promise.all(runners);
+  return out;
+}
+
+/* --------------------------- Extractores -------------------------------- */
 async function pdfArrayBufferToText(ab) {
-  const pdfjsLib = await ensurePDFJS();
-  const loadingTask = pdfjsLib.getDocument({ data: ab });
+  const lib = await ensurePDFJS();
+  const loadingTask = lib.getDocument({ data: ab });
   const pdf = await loadingTask.promise;
-  let out = [];
+  const out = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const line = content.items.map(i => i.str).join(" ");
-    out.push(line);
+    out.push(content.items.map(i => i.str).join(" "));
   }
   return out.join("\n");
 }
 
-async function imageBlobToOCRText(blob) {
-  const Tesseract = await ensureTesseract();
-  const worker = await Tesseract.createWorker({
-    workerPath: URLS.tessWorker,
-    corePath: URLS.tessCore
-  });
+async function imageBlobToOCRText_fast(blob, urlKey) {
+  const k = cleanUrlKey(urlKey);
+  if (k && OCR_CACHE.has(k)) return OCR_CACHE.get(k);
+
+  const w = await ensureOCRWorker();
+  let src = blob;
+
   try {
-    await worker.loadLanguage("spa+por+eng");
-    await worker.initialize("spa+por+eng");
-    const { data } = await worker.recognize(blob);
-    return (data && data.text) ? String(data.text) : "";
-  } finally {
-    await worker.terminate();
-  }
+    const bmp = await createImageBitmap(blob);
+    const maxSide = 1600;
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    if (scale < 1 && globalThis.OffscreenCanvas) {
+      const c = new OffscreenCanvas(Math.round(bmp.width * scale), Math.round(bmp.height * scale));
+      const ctx = c.getContext("2d");
+      ctx.filter = "grayscale(1) contrast(1.5)";
+      ctx.drawImage(bmp, 0, 0, c.width, c.height);
+      src = await c.convertToBlob({ type: "image/jpeg", quality: 0.85 });
+    }
+  } catch(_) {}
+
+  const { data } = await w.recognize(src);
+  const txt = (data && data.text) ? String(data.text) : "";
+  if (k) OCR_CACHE.set(k, txt);
+  return txt;
 }
 
 async function extractFromUrl(url) {
   try {
     if (isPDF(url)) {
       const ab = await fetchAsArrayBuffer(url);
-      return { url, kind: "pdf", text: (await pdfArrayBufferToText(ab)) || "" };
+      const text = await pdfArrayBufferToText(ab);
+      return { url, kind: "pdf", text: text || "" };
     }
     if (isImage(url)) {
       const b = await fetchAsBlob(url);
-      return { url, kind: "image", text: (await imageBlobToOCRText(b)) || "" };
+      const text = await imageBlobToOCRText_fast(b, url);
+      return { url, kind: "image", text: text || "" };
     }
   } catch (e) {
     return { url, kind: "unknown", text: "", error: String(e?.message || e) };
@@ -120,64 +164,64 @@ async function extractFromUrl(url) {
   return { url, kind: "unknown", text: "" };
 }
 
-// ---------- Mensajería ----------
+/* ----------------------------- Mensajería ------------------------------- */
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
 
-  // 1) Análisis con OCR
+  // NEW: persist site/challenge so popup can render badges
+  if (msg.type === "maf:set_site") {
+    try { chrome.storage.session.set({ maf_site: msg.value || null }); } catch {}
+    try { chrome.storage.local.set({ maf_site: msg.value || null }); } catch {}
+    return; // no async response
+  }
+  if (msg.type === "maf:set_challenge") {
+    try { chrome.storage.session.set({ maf_challenge: msg.value || null }); } catch {}
+    try { chrome.storage.local.set({ maf_challenge: msg.value || null }); } catch {}
+    return;
+  }
+
   if (msg.type === "maf:ai_analyze_with_docs") {
     (async () => {
       try {
-        const remote = normalizeAppsScriptUrl(msg.remoteUrl || "");
+        let remote = normalizeAppsScriptUrl(msg.remoteUrl || "");
+        if (!remote) {
+          const storage = await chrome.storage.local.get("remote_url");
+          remote = normalizeAppsScriptUrl(storage.remote_url || "");
+        }
         if (!remote) throw new Error("URL remota vacía");
 
-        const urls = Array.isArray(msg.docUrls) ? msg.docUrls.slice(0, 6) : [];
-        const results = [];
-        for (const u of urls) {
-          results.push(await extractFromUrl(u));
-        }
-        const ocrText = results.map(r => `--- ${r.url}\n${r.text}`).filter(Boolean).join("\n\n");
+        const urls = Array.isArray(msg.docUrls) ? msg.docUrls : [];
+        const results = await mapWithLimit(urls, 2, (u) => extractFromUrl(u));
+
+        const ocrText = results
+          .map(r => r && r.text ? `--- ${r.url}\n${r.text}` : "")
+          .filter(Boolean)
+          .join("\n\n");
 
         const payload = {
           op: "analyze",
           text: String(msg.text || ""),
           cdu: msg.cdu ?? null,
           site: msg.site ?? null,
-          caseId: msg.caseId ?? null,
           ocrText,
-          docMeta: results
+          docMeta: results.map(r => ({ url: r.url, kind: r.kind, error: r.error || null })),
         };
-        const data = await postPlain(remote, payload);
-        if (!data || data.ok === false) throw new Error(data?.error || "Falló Apps Script");
-        sendResponse({ ok: true, data });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e?.message || e) });
-      }
-    })();
-    return true;
-  }
 
-  // 2) Proxy simple (sin OCR)
-  if (msg.type === "maf:ai_analyze") {
-    (async () => {
-      try {
-        const remote = normalizeAppsScriptUrl(msg.remoteUrl || "");
-        if (!remote) throw new Error("URL remota vacía");
-        const data = await postPlain(remote, {
-          op: "analyze",
-          text: String(msg.text || ""),
-          cdu: msg.cdu ?? null,
-          site: msg.site ?? null,
-          caseId: msg.caseId ?? null,
-          ocrText: String(msg.ocrText || ""),
-          docMeta: []
-        });
+        const data = await postJSON(remote, payload);
         if (!data || data.ok === false) throw new Error(data?.error || "Falló Apps Script");
-        sendResponse({ ok: true, data });
+
+        const responseData = {
+          ...data,
+          docMeta: payload.docMeta,
+          docCount: payload.docMeta.length,
+        };
+        console.log("[Mafalda] Documentos procesados:", responseData.docMeta);
+        sendResponse({ ok: true, data: responseData });
       } catch (e) {
         sendResponse({ ok: false, error: String(e?.message || e) });
       }
     })();
-    return true;
+    return true; // respuesta async
   }
 });
+
