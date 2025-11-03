@@ -717,9 +717,7 @@ addEventListener("popstate", attachCoreListeners);
 addEventListener("hashchange", attachCoreListeners);
 addEventListener("focus", attachCoreListeners);
 
-/* ===================================================================== */
 /* =================== Detección de "Nombre del challenge" ==============*/
-/* ===================================================================== */
 const RE_CHALLENGE = /\b(backoffice_[a-z0-9_]+)(?=$|\s|[^\w])/i;
 function cleanChallengeToken(val){ return val ? String(val).trim().replace(/fecha$/i, '') : val; }
 function publishDetectedChallenge(value){
@@ -781,31 +779,57 @@ function ensureChallengeObserver(){
 }
 ensureChallengeObserver();
 
-/* ===================================================================== */
-/* =================== Detección de SITE (país: MLA/MLB/…) ==============*/
-/* ===================================================================== */
-const RE_SITE = /\b(MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/;
+
+/* ======= START: DETECCIÓN DE SITE - PATCHED BY ASSISTANT ======= */
+const RE_SITE = /\b(?:MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/i;
+
+function persistSiteToStorage(v) {
+  try {
+    if (chrome.storage && chrome.storage.session && typeof chrome.storage.session.set === "function") {
+      chrome.storage.session.set({ maf_site: v }, () => {});
+    } else if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ maf_site: v }, () => {});
+    }
+  } catch (e) {
+    console.warn("[Mafalda] no pude persistir maf_site en storage:", e);
+  }
+}
+
 function publishDetectedSite(value){
   const v = value ? String(value).toUpperCase() : null;
-  try { chrome.runtime?.sendMessage?.({ type: "maf:set_site", value: v }); console.log("[Mafalda] site detectado:", v); }
-  catch(e){ console.warn("[Mafalda] no pude enviar site a background:", e); }
+  try {
+    chrome.runtime?.sendMessage?.({ type: "maf:set_site", value: v });
+  } catch(e) {
+    console.warn("[Mafalda] no pude enviar site a background:", e);
+  }
+  persistSiteToStorage(v);
+  console.log("[Mafalda] site detectado (publish & persist):", v);
 }
-let mafSiteObserver=null, mafSiteScanTimer=null, mafCurrentSite=null;
+
+let mafSiteObserver = null, mafSiteScanTimer = null, mafCurrentSite = null;
+
 function findSiteOnce(){
   const nodes = document.querySelectorAll("h1,h2,h3,.page-title,.header,header,nav,div,span,strong");
   for (const el of nodes) {
     const txt = el.textContent || "";
     const m = txt.match(RE_SITE);
-    if (m) return m[1];
+    if (m) return (m[0] || "").toUpperCase();
   }
-  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-  while (tw.nextNode()) {
-    const t = tw.currentNode.nodeValue || "";
-    const m = t.match(RE_SITE);
-    if (m) return m[1];
-  }
+  try {
+    const meta = document.querySelector('meta[name="site"]') || document.querySelector('meta[property="og:site"]');
+    if (meta && meta.content) {
+      const mm = meta.content.match(RE_SITE);
+      if (mm) return (mm[0] || "").toUpperCase();
+    }
+  } catch(_) {}
+  try {
+    const u = location.pathname + (location.search || "");
+    const mu = u.match(RE_SITE);
+    if (mu) return (mu[0] || "").toUpperCase();
+  } catch(_) {}
   return null;
 }
+
 function updateSite(){
   try{
     const found = findSiteOnce();
@@ -813,8 +837,13 @@ function updateSite(){
       mafCurrentSite = found;
       publishDetectedSite(mafCurrentSite);
     }
+    else if (!found && mafCurrentSite){
+      mafCurrentSite = null;
+      publishDetectedSite(null);
+    }
   }catch(_){}
 }
+
 function ensureSiteObserver(){
   if (mafSiteObserver) return;
   updateSite();
@@ -830,10 +859,7 @@ function ensureSiteObserver(){
   });
 }
 ensureSiteObserver();
-
-/* ===================================================================== */
-/* ======================= Gatillo "maf" + Panel IA ====================== */
-/* ===================================================================== */
+/* ======= END: DETECCIÓN DE SITE - PATCHED BY ASSISTANT ======= */
 
 const MAX_DOCS = 3; // Límite de documentos a procesar
 
