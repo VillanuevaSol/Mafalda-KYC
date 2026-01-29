@@ -1,90 +1,35 @@
-/** content.js — FOSXpress v3.7.18 (SHORTCUT REPLACEMENT FIX)
- * - Estructura original restaurada (+1000 líneas).
- * - Solución para "Access to storage is not allowed".
- * - Solución para pérdida de foco en modales.
- * - Solución visual para separadores de mail.
- * - FIX: Respuestas en Gmail preservan asunto "Re:".
- * - FIX: Snippets type="text" ya no muestran campo ASUNTO.
- * - Diferenciación correcta entre type="text" y type="mail".
- * - FIX DEFINITIVO: El shortcut (/mailmoneyind, etc.) ahora se reemplaza
- *   correctamente por el body del snippet usando insertAtInput/insertAtEditable.
- *   El asunto se inserta por separado en el campo correspondiente.
+/** content.js — FOSXpress v3.7.5 (FULL: Storage Fix + Focus Fix + Site/Challenge)
+ * - Incluye parche para evitar bloqueo de storage.
+ * - Incluye 'refindContext' para no perder el lugar de inserción tras el modal.
+ * - Incluye lógica completa de Site, Challenge y Panel Mafalda.
  */
 
-console.log("[FOSXpress] content script v3.7.18 loaded");
+console.log("[FOSXpress] content script v3.7.5 FULL loaded");
 
-/* ================ 1. SILENCIADOR DE ERRORES DE CONTEXTO ================= */
+/* ================ Silenciar errores de contexto invalidado ================= */
 function isContextInvalidatedMsg(msg){
   return /Extension context invalidated/i.test(String(msg || ""));
 }
 addEventListener("unhandledrejection", (e) => {
   if (isContextInvalidatedMsg(e?.reason?.message || e?.reason)) {
     e.preventDefault();
-    console.warn("[FOSXpress] Ignorado: Extension context invalidated (promise)");
   }
 });
 addEventListener("error", (e) => {
   if (isContextInvalidatedMsg(e?.message)) {
     e.preventDefault();
-    console.warn("[FOSXpress] Ignorado: Extension context invalidated (error)");
   }
 });
 
-/* ========================== 2. HELPER DE CONTEXTO ========================== */
+/* ========================== Helpers de contexto ========================== */
 function extAlive(){
   try { return !!(chrome && chrome.runtime && chrome.runtime.id); }
   catch { return false; }
 }
 
-/* ========================== 3. STORAGE POLYFILL (CRÍTICO) ========================== */
-/* Este bloque soluciona el error "Access to storage is not allowed".
-   Si el navegador bloquea el acceso al disco, usamos la memoria RAM (_memoryStore)
-   para que la extensión no se rompa.
-*/
-const _memoryStore = {};
-
-function storageGetLocal(key, def=null){
-  return new Promise(resolve=>{
-    try {
-      if(typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get({[key]: def}, (obj) => {
-          if (chrome.runtime.lastError) {
-            // Si hay error (bloqueo), leemos de RAM
-            // console.warn("[Mafalda] Storage bloqueado, usando RAM para leer:", key);
-            resolve(_memoryStore[key] !== undefined ? _memoryStore[key] : def);
-          } else {
-            resolve(obj?.[key] ?? def);
-          }
-        });
-      } else {
-        // API no disponible
-        resolve(_memoryStore[key] !== undefined ? _memoryStore[key] : def);
-      }
-    } catch(_) {
-      // Crash sincrónico
-      resolve(_memoryStore[key] !== undefined ? _memoryStore[key] : def);
-    }
-  });
-}
-
-function storageSetLocal(obj){
-  // 1. Guardar en RAM siempre (respaldo inmediato)
-  try { Object.assign(_memoryStore, obj); } catch(_){}
-
-  // 2. Intentar guardar en disco (sin romper el flujo si falla)
-  try {
-    if(typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set(obj, () => {
-        // Leemos el error para silenciar la alerta roja en consola
-        const _ignore = chrome.runtime.lastError; 
-      });
-    }
-  } catch(_){}
-}
-
-/* ========================== 4. CACHE DE SNIPPETS ========================== */
+/* ========================== Cache de snippets ========================== */
 let snippetsCache = {};
-let snipIndex = new Map();       // case-insensitive
+let snipIndex = new Map();
 let snipKeysOriginal = [];
 
 function rebuildSnipIndex(){
@@ -95,36 +40,28 @@ function rebuildSnipIndex(){
       if (!Object.prototype.hasOwnProperty.call(snippetsCache, k)) continue;
       const key = String(k).trim();
       if (!key.startsWith("/")) continue;
-      snipIndex.set(key.toLowerCase(), snippetsCache[k]);   // string u objeto {subject, body}
+      snipIndex.set(key.toLowerCase(), snippetsCache[k]);
       snipKeysOriginal.push(key);
     }
     snipKeysOriginal.sort((a,b)=> a.localeCompare(b));
   } catch(_){}
 }
 
-// Inicialización segura
-(async () => {
-  try {
-    // Usamos nuestro storageGetLocal blindado
-    const s = await storageGetLocal("snippets", {});
-    snippetsCache = s || {};
+try {
+  chrome.storage?.local?.get({ snippets: {} }, (r) => {
+    if (chrome.runtime?.lastError) return;
+    snippetsCache = r?.snippets || {};
     rebuildSnipIndex();
-    
-    // Listener de cambios (intentar, pero no fallar si no hay permiso)
-    try {
-      if (chrome.storage && chrome.storage.onChanged) {
-        chrome.storage.onChanged.addListener((c, area) => {
-          if (area === "local" && c?.snippets) {
-            snippetsCache = c.snippets.newValue || {};
-            rebuildSnipIndex();
-          }
-        });
-      }
-    } catch(_){}
-  } catch(_){}
-})();
+  });
+  chrome.storage?.onChanged?.addListener((c, area) => {
+    if (area === "local" && c?.snippets) {
+      snippetsCache = c.snippets.newValue || {};
+      rebuildSnipIndex();
+    }
+  });
+} catch (_) { snippetsCache = {}; rebuildSnipIndex(); }
 
-/* ========================== 5. UTILIDADES ========================== */
+/* ========================== Utilidades ========================== */
 function expandStaticMacros(t) {
   const now = new Date();
   const fmtDate = (d) => d.toISOString().slice(0,10);
@@ -150,70 +87,8 @@ function parsePlaceholders(tpl){
   return tokens;
 }
 function hasPlaceholders(tpl){ return /\{\{(select:|input:)/.test(tpl); }
-
-/**
- * DETECCIÓN DE TIPO DE SNIPPET (v3.7.11)
- * =========================================
- * Los snippets del endpoint N8N vienen con esta estructura:
- *   - key: "/atajo" (obligatorio)
- *   - type: "text" | "mail" (obligatorio)
- *   - subject: solo para type="mail"
- *   - body: contenido del snippet
- *   - title: título breve
- * 
- * IMPORTANTE: Usamos el campo `type` explícitamente para diferenciar.
- * - type="text": Solo inserta body, sin campo de asunto
- * - type="mail": Usa subject y body para campos de email
- */
 function isMailSnippet(value){
-  // NUEVO: Verificar explícitamente type="mail"
-  // Esto evita que snippets type="text" con body se traten como mail
-  if (value && typeof value === "object") {
-    // Si tiene type explícito, usarlo como fuente de verdad
-    if (value.type) {
-      return value.type.toLowerCase() === "mail";
-    }
-    // Fallback legacy: si no tiene type pero tiene subject, asumir mail
-    return Boolean(value.subject);
-  }
-  return false;
-}
-
-/**
- * Extrae el contenido del snippet según su tipo.
- * - Para type="text": devuelve solo el body
- * - Para type="mail": devuelve {subject, body}
- * - Para strings: devuelve el string directamente
- */
-function getSnippetContent(value){
-  if (!value) return "";
-  
-  // String plano (snippet legacy o estático)
-  if (typeof value === "string") return value;
-  
-  // Objeto con estructura N8N
-  if (typeof value === "object") {
-    const type = (value.type || "").toLowerCase();
-    
-    // type="text": Solo devolver el body como string
-    // NO incluir subject, NO tratar como mail
-    if (type === "text") {
-      return value.body || "";
-    }
-    
-    // type="mail": Devolver objeto con subject y body
-    if (type === "mail") {
-      return { subject: value.subject || "", body: value.body || "" };
-    }
-    
-    // Fallback: si tiene subject, tratar como mail; si no, usar body
-    if (value.subject) {
-      return { subject: value.subject, body: value.body || "" };
-    }
-    return value.body || "";
-  }
-  
-  return String(value);
+  return value && typeof value === "object" && (value.subject || value.body);
 }
 function escapeHTML(s){
   return String(s)
@@ -238,13 +113,10 @@ function renderFilled(tpl, valueMap, {highlight=false} = {}){
   const tail = src.slice(lastIndex);
   plain += tail;
   html  += escapeHTML(tail);
-  
-  // Limpieza básica de puntuación
   plain = plain.replace(/\s+([,.;:!?])/g, "$1");
   html  = html.replace(/\s+([,.;:!?])(?![^<]*>)/g, "$1");
   return { plain, html };
 }
-
 function emitInputLike(el){
   try {
     if (typeof InputEvent !== "undefined") {
@@ -271,16 +143,13 @@ function emitInputLike(el){
     el.dispatchEvent(ce);
   } catch(_){}
 }
-
 function getEditableRootFromNode(node){
   let el = (node && node.nodeType === Node.ELEMENT_NODE) ? node : node?.parentElement;
   while (el && !el.isContentEditable) el = el.parentElement;
   return el || document.activeElement || document.body;
 }
 
-/* ================== 6. LÓGICA DE BÚSQUEDA Y FOCO (RESTAURADA) ================== */
-
-// Búsqueda estándar (cuando el cursor está en su lugar)
+// --- LOGICA DE BÚSQUEDA ---
 function findShortcutInInput(el){
   const start=el.selectionStart, end=el.selectionEnd, text=el.value;
   const left=text.slice(0,start).replace(/\s+$/,"");
@@ -289,12 +158,11 @@ function findShortcutInInput(el){
   return { kind:"input", el, original:text, right:text.slice(end), from:last.index, to:last.index+last[0].length, shortcut:last[0] };
 }
 
-/* Fallback inteligente para recuperar el foco perdido.
-   Si el cursor se movió (ej: al hacer clic en el modal), busca la última ocurrencia del atajo.
-*/
+/** NUEVO: Búsqueda de respaldo si se perdió el foco (Smart Refind) */
 function findShortcutInInputFallback(el, shortcutText) {
   if (el.value === undefined) return null;
   const val = String(el.value);
+  // Buscamos la última ocurrencia del atajo (asumiendo que es el que acabas de escribir)
   const idx = val.lastIndexOf(shortcutText); 
   if (idx === -1) return null;
   
@@ -309,7 +177,7 @@ function findShortcutInInputFallback(el, shortcutText) {
   };
 }
 
-/** Esta función decide qué método de búsqueda usar */
+/** Helper robusto para encontrar el contexto (usa fallback si es necesario) */
 function refindContext(el, expectedShortcut) {
     if (el.value !== undefined) {
         // Intento 1: Donde está el cursor actualmente
@@ -414,7 +282,7 @@ function replaceBeforeCaret(ctx, finalText){
   }catch(_){}
 }
 
-/* ================== 7. DIALOG & UI ================== */
+/* ================== DIALOG & UI ================== */
 const ML={yellow:"#FFE600",blue:"#3483FA",border:"#E6E6E6",dark:"#333"};
 let shadowHost=null, dialogOpen=false;
 
@@ -440,18 +308,6 @@ function ensureDialog(){
       .prevCard{ border:1px solid ${ML.border}; border-radius:12px; padding:10px; background:#fff; display:flex; flex-direction:column; gap:8px }
       .prev{ white-space:pre-wrap; overflow:auto; min-height:180px; max-height:44vh }
       .prev .hl{ background: #FFF59D; border-radius:4px; padding:0 2px; }
-      
-      /* FIX VISUAL: Estilo para el separador de mail */
-      .sep-marker { 
-        display:block; 
-        border-top:1px dashed #ccc; 
-        margin:8px 0; 
-        padding-top:4px;
-        font-size:10px; 
-        color:#999; 
-        text-align:center; 
-      }
-
       .actions{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px }
       .btnRow{ display:flex; gap:8px }
       .btn{ border-radius:10px; padding:9px 14px; font-weight:800; cursor:pointer; font-size:13px }
@@ -484,14 +340,34 @@ function ensureDialog(){
   `;
   return shadowHost;
 }
-
 function showToast(msg){
   const t = shadowHost.shadowRoot.querySelector("#toast");
   t.textContent = msg; t.style.display="block";
   clearTimeout(showToast._t); showToast._t = setTimeout(()=>{ t.style.display="none"; }, 1600);
 }
 
-// Helpers de LastValues usando el Storage Seguro
+function storageGetLocal(key, def=null){
+  return new Promise(resolve=>{
+    try{
+      chrome.storage?.local?.get({[key]: def}, obj => {
+        if (chrome.runtime?.lastError) { resolve(def); return; }
+        resolve(obj?.[key] ?? def);
+      });
+    }catch(_){ resolve(def); }
+  });
+}
+
+/** FIX: storageSetLocal con try-catch y silenciador de errores */
+function storageSetLocal(obj){
+  try{
+    if(chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set(obj, ()=>{
+        const _ign = chrome.runtime.lastError; // Leemos el error para silenciarlo
+      });
+    }
+  }catch(_){}
+}
+
 async function getLastValues(shortcut){
   return storageGetLocal(`fx:last:${shortcut}`, null);
 }
@@ -527,13 +403,7 @@ async function openDialog(tpl, shortcut){
   function renderPrev(){
     const valueMap = {};
     for (const s of state) valueMap[s.label] = s.value ?? "";
-    let { plain, html } = renderFilled(tpl, valueMap, {highlight:true});
-    
-    // MEJORA VISUAL: Reemplazar el separador de mail por algo bonito en la vista previa
-    if (html.includes("&lt;&lt;&lt;__MAILSEP__&gt;&gt;&gt;")) {
-      html = html.replace(/&lt;&lt;&lt;__MAILSEP__&gt;&gt;&gt;/g, '<div class="sep-marker">--- Fin Asunto / Inicio Cuerpo ---</div>');
-    }
-    
+    const { plain, html } = renderFilled(tpl, valueMap, {highlight:true});
     if (!prev.hasAttribute("data-manual")) {
       prev.innerHTML = html;
       prev.dataset.plain = plain;
@@ -590,7 +460,7 @@ async function openDialog(tpl, shortcut){
   
   ok.onclick = ()=> {
     const map = {}; state.forEach(s=> map[s.label]=s.value);
-    setLastValues(shortcut, map); 
+    try { setLastValues(shortcut, map); } catch(e){} // No falla si storage está bloqueado
     const plain = prev.dataset.plain || prev.textContent || "";
     done(plain);
   };
@@ -605,29 +475,12 @@ async function openDialog(tpl, shortcut){
   return new Promise(res => (resolvePromise = res));
 }
 
-/* ================== 8. TYPEAHEAD (Autocompletado) ================== */
 let taHost = null; let taOpen = false; let taSelIdx = -1; let taItems = []; let taTarget = null; let taCtxLast = null;
 function ensureTypeahead(){
   if (taHost) return taHost;
   taHost = document.createElement("div"); taHost.style.position = "fixed"; taHost.style.zIndex = "2147483646";
   const sh = taHost.attachShadow({mode:"open"});
-  sh.innerHTML = `
-    <style>
-      .box{
-        min-width: 220px; max-width: 360px;
-        background: #fff;
-        border: 1px solid #E6E6E6; border-radius: 10px;
-        box-shadow: 0 8px 24px rgba(0,0,0,.08);
-        font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-        overflow: hidden;
-      }
-      .item{ padding: 8px 10px; cursor: pointer; display:flex; gap:8px; align-items:center; }
-      .item:hover, .item.active{ background: #F2F6FF; }
-      .kbd{ font-size:11px; color:#999; }
-      .empty{ padding:8px 10px; color:#777; }
-    </style>
-    <div class="box" id="box" hidden></div>
-  `;
+  sh.innerHTML = `<style>.box{min-width: 220px; max-width: 360px;background: #fff;border: 1px solid #E6E6E6; border-radius: 10px;box-shadow: 0 8px 24px rgba(0,0,0,.08);font: 13px/1.35 system-ui, sans-serif;overflow: hidden;}.item{ padding: 8px 10px; cursor: pointer; display:flex; gap:8px; align-items:center; }.item:hover, .item.active{ background: #F2F6FF; }.kbd{ font-size:11px; color:#999; }.empty{ padding:8px 10px; color:#777; }</style><div class="box" id="box" hidden></div>`;
   document.documentElement.appendChild(taHost); return taHost;
 }
 function hideTypeahead(){ if (!taHost) return; taHost.shadowRoot.getElementById("box").hidden = true; taOpen = false; taSelIdx = -1; taItems = []; taTarget = null; }
@@ -697,154 +550,369 @@ function shouldTrigger(e){
   if (e.type==="keydown" && e.ctrlKey && e.key===" ") return true;
   return e.key===" " || e.key==="Enter" || e.key==="Tab" || e.type==="input";
 }
-function findEmailFields() {
-  const d = document;
-  const gmailSubject = d.querySelector('input[name="subjectbox"]') || d.querySelector('input[aria-label="Subject"]') || d.querySelector('textarea[aria-label="Subject"]') || d.querySelector('input[aria-label="Asunto"]') || d.querySelector('textarea[aria-label="Asunto"]');
-  const gmailBody    = d.querySelector('div[aria-label="Message Body"]') || d.querySelector('div[aria-label="Cuerpo del mensaje"]') || d.querySelector('div[role="textbox"][g_editable="true"]');
-  const outlookSubject = d.querySelector('input[aria-label="Add a subject"]') || d.querySelector('input[aria-label="Asunto"]');
-  const outlookBody    = d.querySelector('div[aria-label="Message body"]') || d.querySelector('div[aria-label="Cuerpo del mensaje"]') || d.querySelector('div[role="textbox"][contenteditable="true"]');
-  return { subjectEl: gmailSubject || outlookSubject || null, bodyEl: gmailBody || outlookBody || null };
+/**
+ * Detecta si estamos en una ventana de respuesta/reenvío en Gmail
+ * Gmail usa "Re:", "Fwd:", "RV:", "RE:", etc. como prefijos de asunto en respuestas
+ */
+function isGmailReplyContext(subjectEl) {
+  if (!subjectEl) return false;
+  const currentSubject = ('value' in subjectEl) ? subjectEl.value : (subjectEl.textContent || '');
+  // Detectar prefijos típicos de respuesta/reenvío en múltiples idiomas
+  const replyPrefixes = /^(Re|Fwd|Fw|RV|RE|FW|Rép|AW|SV|VS|Antw|Odp|R|I):\s*/i;
+  return replyPrefixes.test(currentSubject.trim());
 }
 
 /**
- * Detecta si estamos en contexto de respuesta/reenvío en Gmail.
- * En ese caso, el asunto ya tiene "Re:" o "Fwd:" y NO debe modificarse.
+ * Detecta si el campo de asunto está visible/editable en la UI de Gmail
+ * En respuestas inline, el campo de asunto suele estar oculto o colapsado
  */
-function isReplyContext(subjectEl) {
+function isSubjectFieldVisible(subjectEl) {
   if (!subjectEl) return false;
-  const val = ('value' in subjectEl) ? subjectEl.value : (subjectEl.textContent || '');
-  // Si el asunto ya tiene Re:, Fwd:, RE:, RV: (español), etc., es una respuesta
-  if (/^(Re|Fwd|Fw|RV|Reenv[ií]o)\s*:/i.test(val.trim())) return true;
+  const style = window.getComputedStyle(subjectEl);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  // Verificar si el elemento tiene dimensiones visibles
+  const rect = subjectEl.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * Verifica si un elemento es visible y está en el viewport
+ */
+function isElementVisible(el) {
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * Detecta si estamos en contexto de composición inline (respuesta) vs ventana nueva
+ * Gmail usa clases específicas para la ventana de respuesta inline
+ */
+function isGmailInlineReply() {
+  // Buscar indicadores de respuesta inline en Gmail
+  const replyContainer = document.querySelector('.ip.iq') || 
+                         document.querySelector('[data-message-id]') || 
+                         document.querySelector('.adn.ads');
   
-  // Gmail a veces oculta el campo de asunto en respuestas; 
-  // si el body ya tiene contenido (cita del mensaje anterior), es respuesta
+  // También verificar si hay un hilo visible (múltiples mensajes)
+  const threadMessages = document.querySelectorAll('[data-message-id], .gs');
+  const hasThread = threadMessages.length > 1;
+  
+  return !!(replyContainer || hasThread);
+}
+
+/**
+ * Encuentra el editor de respuesta ACTIVO dentro de un hilo de Gmail.
+ * CRÍTICO: Gmail puede tener múltiples editores (compose new, reply inline, etc.)
+ * Debemos encontrar el que está ACTIVO y VISIBLE en el contexto del hilo.
+ */
+function findActiveGmailReplyEditor() {
   const d = document;
-  const gmailQuote = d.querySelector('.gmail_quote') || d.querySelector('blockquote[type="cite"]');
-  if (gmailQuote) return true;
   
-  // Si el campo de asunto tiene valor pero no está visible, probablemente es respuesta
-  if (subjectEl && val.trim().length > 0) {
-    const rect = subjectEl.getBoundingClientRect();
-    if (rect.height === 0 || rect.width === 0) return true;
+  // Selectores específicos para el editor de respuesta en Gmail (varios idiomas)
+  const gmailBodySelectors = [
+    // Editor de respuesta inline en hilo - selector más específico
+    'div[role="textbox"][aria-label*="Mensaje"][contenteditable="true"]',
+    'div[role="textbox"][aria-label*="Message"][contenteditable="true"]',
+    'div[role="textbox"][aria-label="Cuerpo del mensaje"][contenteditable="true"]',
+    'div[role="textbox"][aria-label="Message Body"][contenteditable="true"]',
+    // Editores con g_editable (Gmail específico)
+    'div[role="textbox"][g_editable="true"][contenteditable="true"]',
+    // Fallback más genérico
+    'div[aria-label*="essage"][contenteditable="true"]',
+    'div[aria-label*="ensaje"][contenteditable="true"]',
+  ];
+  
+  // Buscar TODOS los editores que coincidan
+  let allEditors = [];
+  for (const selector of gmailBodySelectors) {
+    const found = d.querySelectorAll(selector);
+    found.forEach(el => {
+      if (!allEditors.includes(el)) allEditors.push(el);
+    });
   }
+  
+  console.log(`[Mafalda] Encontrados ${allEditors.length} editores de Gmail`);
+  
+  if (allEditors.length === 0) return null;
+  if (allEditors.length === 1) return allEditors[0];
+  
+  // Si hay múltiples editores, priorizar por:
+  // 1. El que tiene el foco actualmente
+  // 2. El que está dentro de un contenedor de respuesta inline visible
+  // 3. El más cercano al final del DOM (típicamente el reply activo)
+  
+  // Opción 1: Verificar si alguno tiene el foco
+  const focused = d.activeElement;
+  for (const editor of allEditors) {
+    if (editor === focused || editor.contains(focused)) {
+      console.log("[Mafalda] Editor seleccionado: tiene el foco");
+      return editor;
+    }
+  }
+  
+  // Opción 2: Buscar el editor dentro del contenedor de respuesta inline visible
+  // Gmail usa contenedores con clases específicas para el área de respuesta
+  const replyContainerSelectors = [
+    '.ip.iq',           // Contenedor de respuesta inline
+    '.adn.ads',         // Área de respuesta expandida  
+    '.Am.aO9',          // Contenedor alternativo de respuesta
+    '.M9',              // Otro contenedor de composición
+    '.aoP',             // Área de composición general
+  ];
+  
+  for (const containerSel of replyContainerSelectors) {
+    const containers = d.querySelectorAll(containerSel);
+    for (const container of containers) {
+      if (!isElementVisible(container)) continue;
+      
+      for (const editor of allEditors) {
+        if (container.contains(editor) && isElementVisible(editor)) {
+          console.log(`[Mafalda] Editor seleccionado: dentro de ${containerSel}`);
+          return editor;
+        }
+      }
+    }
+  }
+  
+  // Opción 3: Filtrar solo los visibles y tomar el último (más reciente/activo)
+  const visibleEditors = allEditors.filter(isElementVisible);
+  if (visibleEditors.length > 0) {
+    // Priorizar el que está más abajo en la página (típicamente el reply activo)
+    visibleEditors.sort((a, b) => {
+      const rectA = a.getBoundingClientRect();
+      const rectB = b.getBoundingClientRect();
+      return rectB.top - rectA.top; // El de más abajo primero
+    });
+    console.log(`[Mafalda] Editor seleccionado: el más abajo de ${visibleEditors.length} visibles`);
+    return visibleEditors[0];
+  }
+  
+  // Fallback: el primero disponible
+  console.log("[Mafalda] Editor seleccionado: fallback al primero");
+  return allEditors[0];
+}
+
+/**
+ * Encuentra el campo de asunto asociado a un editor específico de Gmail
+ */
+function findSubjectForEditor(editor) {
+  if (!editor) return null;
+  
+  const d = document;
+  
+  // Buscar el contenedor padre del editor (form de composición)
+  let container = editor.closest('form') || 
+                  editor.closest('.M9') || 
+                  editor.closest('.aoP') ||
+                  editor.closest('.ip');
+  
+  if (container) {
+    // Buscar el campo de asunto dentro del mismo contenedor
+    const subject = container.querySelector('input[name="subjectbox"]') ||
+                    container.querySelector('input[aria-label="Subject"]') ||
+                    container.querySelector('input[aria-label="Asunto"]');
+    if (subject) return subject;
+  }
+  
+  // Fallback: buscar globalmente (para compatibilidad)
+  return d.querySelector('input[name="subjectbox"]') || 
+         d.querySelector('input[aria-label="Subject"]') ||
+         d.querySelector('input[aria-label="Asunto"]');
+}
+
+function findEmailFields() {
+  const d = document;
+  
+  // GMAIL: Usar la nueva lógica inteligente para encontrar el editor correcto
+  const isGmail = location.hostname.includes('mail.google.com');
+  
+  let gmailBody = null;
+  let gmailSubject = null;
+  
+  if (isGmail) {
+    // Usar la función especializada para Gmail
+    gmailBody = findActiveGmailReplyEditor();
+    gmailSubject = findSubjectForEditor(gmailBody);
+    console.log("[Mafalda] Gmail detectado. Body encontrado:", !!gmailBody, "Subject encontrado:", !!gmailSubject);
+  } else {
+    // Fallback para otros clientes o Gmail no detectado
+    gmailSubject = d.querySelector('input[name="subjectbox"]') || 
+                   d.querySelector('input[aria-label="Subject"]') || 
+                   d.querySelector('textarea[aria-label="Subject"]') || 
+                   d.querySelector('input[aria-label="Asunto"]') || 
+                   d.querySelector('textarea[aria-label="Asunto"]');
+    
+    gmailBody = d.querySelector('div[aria-label="Message Body"]') || 
+                d.querySelector('div[aria-label="Cuerpo del mensaje"]') || 
+                d.querySelector('div[role="textbox"][g_editable="true"]') ||
+                d.querySelector('div[contenteditable="true"][aria-label*="essage"]') ||
+                d.querySelector('div[contenteditable="true"][aria-label*="ensaje"]');
+  }
+  
+  // Outlook selectors
+  const outlookSubject = d.querySelector('input[aria-label="Add a subject"]') || 
+                         d.querySelector('input[aria-label="Asunto"]');
+  const outlookBody = d.querySelector('div[aria-label="Message body"]') || 
+                      d.querySelector('div[aria-label="Cuerpo del mensaje"]') || 
+                      d.querySelector('div[role="textbox"][contenteditable="true"]');
+  
+  const subjectEl = gmailSubject || outlookSubject || null;
+  const bodyEl = gmailBody || outlookBody || null;
+  
+  // Determinar el contexto de email
+  const isReply = isGmailReplyContext(subjectEl) || isGmailInlineReply();
+  const subjectVisible = isSubjectFieldVisible(subjectEl);
+  
+  return { 
+    subjectEl, 
+    bodyEl, 
+    isReply,           // true si es una respuesta/reenvío
+    subjectVisible     // true si el campo de asunto está visible
+  };
+}
+
+function setInputValue(el, value, appendMode = false) {
+  if (!el) return;
+  
+  // Asegurar que el elemento tenga foco
+  el.focus();
+  
+  if ('value' in el) {
+    // Input/textarea
+    if (appendMode) {
+      el.value = el.value + value;
+    } else {
+      el.value = value;
+    }
+    emitInputLike(el);
+  } else {
+    // ContentEditable (como el body de Gmail)
+    // Convertir saltos de línea a <br> para HTML
+    const htmlValue = String(value).replace(/\n/g, '<br>');
+    
+    if (appendMode) {
+      // Insertar al final del contenido existente
+      const br = document.createElement('br');
+      el.appendChild(br);
+      el.insertAdjacentHTML('beforeend', htmlValue);
+    } else {
+      // Reemplazar todo el contenido
+      el.innerHTML = htmlValue;
+    }
+    
+    // Mover el cursor al final del contenido
+    moveCursorToEnd(el);
+    
+    // Emitir eventos para que Gmail detecte los cambios
+    emitInputLike(el);
+    
+    // Gmail a veces necesita eventos adicionales
+    try {
+      el.dispatchEvent(new Event('focus', { bubbles: true }));
+      el.dispatchEvent(new Event('keyup', { bubbles: true }));
+    } catch(_) {}
+  }
+}
+
+/**
+ * Mueve el cursor al final del contenido de un elemento contenteditable
+ */
+function moveCursorToEnd(el) {
+  if (!el) return;
+  try {
+    el.focus();
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(el);
+    range.collapse(false); // false = colapsar al final
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch(_) {}
+}
+
+/**
+ * Verifica si un elemento es un editor de email (Gmail, Outlook, etc.)
+ */
+function isEmailEditor(el) {
+  if (!el) return false;
+  // Verificar atributos típicos de editores de email
+  const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+  const role = el.getAttribute('role');
+  const isContentEditable = el.isContentEditable || el.contentEditable === 'true';
+  
+  // Gmail patterns
+  if (ariaLabel.includes('message') || ariaLabel.includes('mensaje') || 
+      ariaLabel.includes('body') || ariaLabel.includes('cuerpo')) {
+    return true;
+  }
+  if (el.hasAttribute('g_editable')) return true;
+  if (role === 'textbox' && isContentEditable) return true;
   
   return false;
 }
 
 /**
- * Obtiene la posición del cursor en un elemento contenteditable
- */
-function getCaretPositionInEditable(el) {
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  if (!el.contains(range.startContainer)) return null;
-  return range;
-}
-
-/**
- * Inserta HTML al inicio de un contenteditable, preservando contenido existente
- */
-function prependToEditable(el, htmlContent) {
-  if (!el) return;
-  el.focus();
-  
-  // Insertar al inicio, antes de cualquier contenido existente
-  const firstChild = el.firstChild;
-  if (firstChild) {
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = htmlContent + '<br><br>';
-    // Insertar todos los nodos del wrapper antes del primer hijo
-    while (wrapper.firstChild) {
-      el.insertBefore(wrapper.firstChild, firstChild);
-    }
-  } else {
-    el.innerHTML = htmlContent;
-  }
-  
-  emitInputLike(el);
-}
-
-/**
- * Inserta texto en la posición actual del cursor en un contenteditable.
- * Si no hay cursor, inserta al inicio.
- */
-function insertAtCursorInEditable(el, htmlContent) {
-  if (!el) return;
-  el.focus();
-  
-  const sel = window.getSelection();
-  const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
-  
-  // Verificar que el cursor está dentro del elemento
-  if (range && el.contains(range.startContainer)) {
-    // Insertar en la posición del cursor
-    range.deleteContents();
-    
-    const frag = document.createDocumentFragment();
-    const temp = document.createElement('div');
-    temp.innerHTML = htmlContent;
-    while (temp.firstChild) {
-      frag.appendChild(temp.firstChild);
-    }
-    
-    range.insertNode(frag);
-    
-    // Mover cursor al final del contenido insertado
-    range.collapse(false);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } else {
-    // Si no hay cursor válido, insertar al inicio
-    prependToEditable(el, htmlContent);
-  }
-  
-  emitInputLike(el);
-}
-
-function setInputValue(el, value) {
-  if (!el) return; el.focus();
-  if ('value' in el) { el.value = value; emitInputLike(el); }
-  else { el.innerHTML = ''; el.insertAdjacentHTML('afterbegin', String(value).replace(/\n/g, '<br>')); emitInputLike(el); }
-}
-
-/**
- * Llena los campos de email inteligentemente.
- * - Si es respuesta: NO modifica el asunto, solo inserta en el body
- * - Si es correo nuevo: llena ambos campos
+ * Rellena los campos de email de forma inteligente:
+ * - En respuestas: NO modifica el asunto (para mantener el hilo)
+ * - En correos nuevos: Rellena asunto y body normalmente
+ * 
  * @param {string} subjectText - Texto del asunto
  * @param {string} bodyText - Texto del cuerpo
- * @param {object} options - Opciones adicionales
- * @param {boolean} options.forceSubject - Forzar sobreescribir asunto incluso en respuestas
- * @returns {boolean} - true si se pudo llenar al menos un campo
+ * @param {HTMLElement} [targetEditor] - Editor donde insertar (opcional, si ya tenemos referencia)
+ * @returns {Object|false} - false si no se encontraron campos, o un objeto con info del resultado
  */
-function tryFillEmail(subjectText, bodyText, options = {}) {
-  const { subjectEl, bodyEl } = findEmailFields();
-  if (!subjectEl && !bodyEl) return false;
+function tryFillEmail(subjectText, bodyText, targetEditor = null) {
+  let { subjectEl, bodyEl, isReply, subjectVisible } = findEmailFields();
   
-  const isReply = isReplyContext(subjectEl);
-  
-  // Solo modificar el asunto si NO es respuesta o si se fuerza
-  if (subjectEl && !isReply && subjectText) {
-    setInputValue(subjectEl, subjectText);
-  } else if (subjectEl && isReply) {
-    console.log("[FOSXpress] Contexto de respuesta detectado, preservando asunto original.");
-  }
-  
-  // Para el body: insertar al inicio del contenido existente (respeta la cita/firma)
-  if (bodyEl && bodyText) {
-    const htmlBody = String(bodyText).replace(/\n/g, '<br>');
+  // Si se proporcionó un editor específico y es válido, usarlo
+  // Esto asegura que insertemos en el editor donde el usuario estaba escribiendo
+  if (targetEditor && isEmailEditor(targetEditor)) {
+    console.log("[Mafalda] Usando editor proporcionado en lugar del detectado automáticamente");
+    bodyEl = targetEditor;
     
-    if (isReply) {
-      // En respuestas: insertar al inicio, antes de la cita
-      prependToEditable(bodyEl, htmlBody);
-    } else {
-      // En correo nuevo: reemplazar todo el contenido
-      setInputValue(bodyEl, bodyText);
+    // También actualizar el subject asociado a este editor
+    const associatedSubject = findSubjectForEditor(targetEditor);
+    if (associatedSubject) {
+      subjectEl = associatedSubject;
+      subjectVisible = isSubjectFieldVisible(associatedSubject);
+      isReply = isGmailReplyContext(associatedSubject) || isGmailInlineReply();
     }
   }
   
-  return true;
+  if (!subjectEl && !bodyEl) return false;
+  
+  // Lógica de asunto:
+  // - Si es una respuesta (Re:, Fwd:, etc.) → NO modificar el asunto para mantener el hilo
+  // - Si el asunto no está visible → NO modificar (Gmail lo maneja automáticamente)
+  // - Si es un correo nuevo con asunto visible → Sí establecer el asunto del snippet
+  const shouldSetSubject = subjectEl && 
+                           subjectVisible && 
+                           !isReply && 
+                           subjectText && 
+                           subjectText.trim().length > 0;
+  
+  if (shouldSetSubject) {
+    setInputValue(subjectEl, subjectText);
+    console.log("[Mafalda] Asunto establecido (correo nuevo):", subjectText);
+  } else if (isReply) {
+    console.log("[Mafalda] Contexto de respuesta detectado - asunto preservado para mantener el hilo");
+  }
+  
+  // El body siempre se inserta (es el contenido principal del snippet)
+  if (bodyEl) {
+    setInputValue(bodyEl, bodyText);
+    console.log("[Mafalda] Body insertado en:", bodyEl);
+  }
+  
+  return {
+    filled: true,
+    isReply: isReply,
+    subjectSet: shouldSetSubject,
+    bodySet: !!bodyEl
+  };
 }
 
 document.addEventListener("keydown", onEvent, true);
@@ -875,78 +943,79 @@ async function onEvent(e){
   if(!tplRaw) return;
   hideTypeahead();
 
-  // --- LÓGICA PRINCIPAL DE REEMPLAZO (v3.7.11) ---
-  // Extraer contenido según el tipo de snippet
-  const snippetContent = getSnippetContent(tplRaw);
-  const isMail = isMailSnippet(tplRaw);
-  
-  // Determinar el template a procesar
-  // - Para mail: combinar subject + body con separador
-  // - Para text: usar solo el body (ya extraído por getSnippetContent)
-  let tplToProcess;
-  if (isMail && typeof snippetContent === "object") {
-    // type="mail": Combinar subject y body con separador visual
-    tplToProcess = (snippetContent.subject || "") + "\n<<<__MAILSEP__>>>\n" + (snippetContent.body || "");
-  } else {
-    // type="text" o string plano: usar contenido directamente
-    tplToProcess = String(snippetContent);
-  }
-  
-  // Verificar si tiene placeholders (inputs/selects)
-  const needsDialog = hasPlaceholders(tplToProcess);
-  
-  if (isMail || needsDialog) {
-    // Abrir diálogo para mail o snippets con placeholders
-    const finalText = await openDialog(tplToProcess, ctx.shortcut);
+  // --- LOGIC START ---
+  if (isMailSnippet(tplRaw) || hasPlaceholders(String(tplRaw))) {
+    let composite = tplRaw;
+    let isMail = isMailSnippet(tplRaw);
+    if(isMail) {
+      composite = (tplRaw.subject||"") + "\n<<<__MAILSEP__>>>\n" + (tplRaw.body||"");
+    }
+    
+    // Abrir Diálogo
+    const finalText = await openDialog(composite, ctx.shortcut);
     if(finalText == null) return;
     
-    // FIX DE FOCO: Reencontrar el contexto
+    // FIX DE FOCO: Reencontramos el atajo aunque hayamos perdido el foco
     t.focus();
     const ctx2 = refindContext(t, ctx.shortcut);
-    if(!ctx2) { console.warn("Foco perdido, no pude reemplazar."); return; }
+    
+    if(!ctx2) { 
+       console.warn("No pude encontrar el atajo original para reemplazar."); return; 
+    }
     
     if (isMail) {
-      // === PROCESAMIENTO PARA type="mail" (v3.7.18 - FIX DEFINITIVO) ===
-      // Separar subject y body del texto procesado
       const parts = String(finalText).split("\n<<<__MAILSEP__>>>\n");
-      const sFinal = (parts[0]||"").trim();
-      const bFinal = (parts.slice(1).join("\n")||"").trim();
+      const sFinal = (parts[0]||"").trim(); const bFinal = (parts.slice(1).join("\n")||"").trim();
       
-      // PASO 1: Reemplazar el shortcut con el body del snippet
-      // Esto usa insertAtInput/insertAtEditable que SÍ eliminan el shortcut
+      // Primero eliminar el atajo del editor antes de insertar el snippet
       if(ctx2.kind==="input") {
-        insertAtInput(ctx2, bFinal);
-      } else {
-        insertAtEditable(ctx2, bFinal);
+        // Para inputs, limpiar el atajo
+        const before = ctx2.original.slice(0, ctx2.from);
+        const after = ctx2.original.slice(ctx2.to) + ctx2.right;
+        ctx2.el.value = before + after;
+        emitInputLike(ctx2.el);
+      } else if(ctx2.kind === "editable") {
+        // Para contenteditable, eliminar el atajo
+        try {
+          ctx2.del.deleteContents();
+        } catch(_) {}
       }
       
-      // PASO 2: Insertar el asunto en el campo correspondiente (si existe)
-      if (sFinal) {
-        const { subjectEl } = findEmailFields();
-        if (subjectEl && !isReplyContext(subjectEl)) {
-          setInputValue(subjectEl, sFinal);
-          console.log("[FOSXpress] Asunto insertado:", sFinal);
+      // Pasar el elemento target (t) para asegurar que usamos el editor correcto
+      const result = tryFillEmail(sFinal, bFinal, t);
+      if(!result) {
+        const fallback = `ASUNTO: ${sFinal}\n\n${bFinal}`;
+        if(ctx2.kind==="input") insertAtInput(ctx2, fallback); else insertAtEditable(ctx2, fallback);
+        toastQuick("Snippet insertado ✅");
+      } else {
+        // Mensaje contextual según el tipo de operación
+        if (result.isReply) {
+          toastQuick("Respuesta en hilo ✅");
+        } else {
+          toastQuick("Mail completado ✅");
         }
       }
-      
-      showToast("Mail completado ✅");
     } else {
-      // === PROCESAMIENTO PARA type="text" CON PLACEHOLDERS ===
-      // Insertar solo el texto procesado, SIN ningún campo de asunto
+      // Normal placeholder replacement
       if(ctx2.kind==="input") insertAtInput(ctx2, finalText); else insertAtEditable(ctx2, finalText);
-      showToast("Snippet insertado ✅");
+      toastQuick("Snippet insertado ✅");
     }
     return;
   }
   
-  // === SNIPPET ESTÁTICO (sin placeholders, type="text" o string) ===
-  // Insertar directamente el contenido expandido
-  const final = expandStaticMacros(tplToProcess);
+  // Static Snippet (No dialog)
+  const final = expandStaticMacros(tplRaw);
   const ctx2 = (t.value!==undefined) ? findShortcutInInput(t) : findShortcutInEditable();
   if(ctx2?.kind==="input") insertAtInput(ctx2, final); else if(ctx2) insertAtEditable(ctx2, final);
-  showToast("Snippet insertado ✅");
+  toastQuick("Snippet insertado ✅");
 }
 
+function toastQuick(msg){
+  try{ const d=document.createElement("div");
+    d.textContent=msg; d.style.cssText="position:fixed;bottom:18px;right:18px;background:#1f2937;color:#fff;padding:10px 14px;border-radius:10px;font-size:13px;z-index:2147483647;opacity:.98";
+    document.body.appendChild(d); setTimeout(()=>d.remove(),1500);
+  }catch(_){}
+}
 function cleanupAll(){ hideTypeahead(); if (shadowHost?.isConnected) { try { shadowHost.remove(); } catch(_) {} } dialogOpen = false; }
 addEventListener("pagehide", cleanupAll);
 function attachCoreListeners(){ document.addEventListener("keydown", onEvent, true); document.addEventListener("keyup", onEvent, true); document.addEventListener("input", onEvent, true); }
@@ -954,24 +1023,14 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 addEventListener("pageshow", () => { attachCoreListeners(); dialogOpen = false; });
 addEventListener("popstate", attachCoreListeners); addEventListener("hashchange", attachCoreListeners); addEventListener("focus", attachCoreListeners);
 
-/* =================== 9. DETECCIÓN SITE/CHALLENGE ================== */
+/* =================== Detección de "Nombre del challenge" ==============*/
 const RE_CHALLENGE = /\b(backoffice_[a-z0-9_]+)(?=$|\s|[^\w])/i;
-const RE_SITE = /\b(?:MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/i;
-
 function cleanChallengeToken(val){ return val ? String(val).trim().replace(/fecha$/i, '') : val; }
-
 function publishDetectedChallenge(value){
   const v = value ? String(value).toLowerCase() : null;
   try { chrome.runtime?.sendMessage?.({ type: "maf:set_challenge", value: v }); console.log("[Mafalda] challenge detectado:", v); }
   catch(e){ console.warn("[Mafalda] no pude enviar a background:", e); }
 }
-function publishDetectedSite(value){
-  const v = value ? String(value).toUpperCase() : null;
-  try { chrome.runtime?.sendMessage?.({ type: "maf:set_site", value: v }); } catch(e) { console.warn("[Mafalda] no pude enviar site a background:", e); }
-  storageSetLocal({ maf_site: v });
-  console.log("[Mafalda] site detectado (publish & persist):", v);
-}
-
 let mafChallengeObserver=null, mafScanTimer=null, mafCurrentChallenge=null;
 function findLabelNode() {
   const nodes = document.querySelectorAll("span,div,p,strong,h1,h2,h3,label");
@@ -1025,6 +1084,32 @@ function ensureChallengeObserver(){
   });
 }
 ensureChallengeObserver();
+
+/* ======= START: DETECCIÓN DE SITE ======= */
+const RE_SITE = /\b(?:MLA|MLB|MLM|MLC|MCO|MPE|MLU|MLV)\b/i;
+
+function persistSiteToStorage(v) {
+  try {
+    if (chrome.storage && chrome.storage.session && typeof chrome.storage.session.set === "function") {
+      chrome.storage.session.set({ maf_site: v }, () => {});
+    } else if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ maf_site: v }, () => {});
+    }
+  } catch (e) {
+    console.warn("[Mafalda] no pude persistir maf_site en storage:", e);
+  }
+}
+
+function publishDetectedSite(value){
+  const v = value ? String(value).toUpperCase() : null;
+  try {
+    chrome.runtime?.sendMessage?.({ type: "maf:set_site", value: v });
+  } catch(e) {
+    console.warn("[Mafalda] no pude enviar site a background:", e);
+  }
+  persistSiteToStorage(v);
+  console.log("[Mafalda] site detectado (publish & persist):", v);
+}
 
 let mafSiteObserver = null, mafSiteScanTimer = null, mafCurrentSite = null;
 
@@ -1080,7 +1165,7 @@ function ensureSiteObserver(){
 }
 ensureSiteObserver();
 
-/* ============ 10. MAFALDA PANEL BUTTON & LOGIC ============ */
+/* ============ MAFALDA PANEL BUTTON & LOGIC ============ */
 
 const MAX_DOCS = 3;
 
@@ -1218,7 +1303,7 @@ async function analyzeWithAI(freeText, docUrls){
         (res) => {
           if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
           if (!res || res.ok === false) return reject(new Error(res?.error || "No se pudo analizar el texto."));
-          resolve(res.data); // incluye docMeta y docCount
+          resolve(res.data);
         }
       );
     } catch (e) { reject(e); }
@@ -1233,42 +1318,30 @@ function openMafPanel(freeText, ctxForInsert, docUrls){
 
   sh.innerHTML = `<style>
       @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap');
-      :root{
-        --azul:#283277; --meli:#FFC800; --ink:#333333;
-        --azul-12: rgba(40,50,119,.12);
-        --azul-18: rgba(40,50,119,.18);
-        --azul-30: rgba(40,50,119,.30);
-      }
+      :root{ --azul:#283277; --meli:#FFC800; --ink:#333333; --azul-12: rgba(40,50,119,.12); --azul-18: rgba(40,50,119,.18); --azul-30: rgba(40,50,119,.30); }
       :host{ font-family:'Rubik',system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--ink); }
       dialog{ border:none; border-radius:18px; width:min(800px, 96vw); padding:0; }
       dialog::backdrop{ background:rgba(0,0,0,.3) }
       .shell{ border-radius:18px; background:#fff; box-shadow:0 12px 34px rgba(0,0,0,.14); overflow:hidden; display:flex; flex-direction:column; max-height:84vh; }
-      /* HEADER AZUL VISIBLE */
       .head{ background:#283277; color:#fff; padding:10px 16px; display:flex; align-items:center; gap:10px; }
       .brand{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:8px; background:linear-gradient(180deg, rgba(255,200,0,.16), rgba(255,200,0,.07)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.25) }
       .title{ font-size:16px; font-weight:800; margin:0 }
-      
       .content{ display:grid; grid-template-columns: 230px 1fr; flex:1; overflow:hidden; background:#fff; }
       .left{ border-right:1px solid var(--azul-18); display:flex; flex-direction:column; overflow:auto; }
       .cell{ padding:14px 16px; }
       .cell + .cell{ border-top:1px solid var(--azul-18); }
       h3.h{ margin:0 0 8px 0; font-size:18px; font-weight:800; color:#283277 }
       .muted{ color:#657084; font-size:12px; font-weight:400 }
-
       .box{ background:linear-gradient(180deg,#fff,#fafafa); border:1px solid var(--azul-18); border-radius:14px; padding:12px; color:#0f172a; white-space:pre-wrap; }
       .case{ min-height:80px; }
       .det  { min-height:80px; }
       .final{ min-height:180px; max-height:calc(66vh - 140px); overflow:auto; }
-
       .right{ display:flex; flex-direction:column; overflow:hidden; }
       .right-inner{ padding:16px; display:flex; flex-direction:column; height:100%; }
-
-      /* BOTONES: asegurar visibilidad del ENVIAR */
       .row-actions{ display:flex; gap:12px; justify-content:flex-end; padding-top:12px; }
       .btn{ display:inline-flex; align-items:center; gap:8px; font-weight:800; font-size:14px; border-radius:14px; padding:10px 16px; cursor:pointer; }
       .btn.copy{ color:#283277; background:#fff; border:1px solid var(--azul-30); }
       .btn.insert{ color:#fff !important; background:#283277 !important; border:1px solid #283277 !important; box-shadow:0 1px 0 rgba(0,0,0,.05); }
-
       .close{ position:absolute; right:12px; top:12px; border:none; background:#fff; border-radius:10px; padding:6px 9px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.06) }
       .spinner{ display:inline-block; width:14px; height:14px; border:2px solid var(--azul-18); border-top-color:#283277; border-radius:50%; animation:sp 1s linear infinite; margin-right:6px }
       @keyframes sp{ to{ transform:rotate(360deg) } }
@@ -1297,7 +1370,6 @@ function openMafPanel(freeText, ctxForInsert, docUrls){
               <div id="detected" class="box det"><span class="spinner"></span>Analizando…</div>
             </div>
           </div>
-
           <div class="right">
             <div class="right-inner">
               <div style="padding-bottom:8px">
@@ -1323,7 +1395,6 @@ function openMafPanel(freeText, ctxForInsert, docUrls){
   const finalEl   = sh.querySelector("#final");
   const docCountEl= sh.querySelector("#docCount");
 
-  // Mostrar candidatos detectados antes del análisis
   caseEl.textContent = freeText || "(vacío)";
   docCountEl.textContent = `${docUrls.length} documento(s) candidato(s)`;
 
@@ -1337,8 +1408,6 @@ function openMafPanel(freeText, ctxForInsert, docUrls){
   (async ()=> {
     try {
       const res = await analyzeWithAI(freeText, docUrls);
-
-      // Actualizamos contador real
       const count = Number(res.docCount || (res.docMeta?.length || 0));
       docCountEl.textContent = `${count} documento(s) analizado(s)`;
 
@@ -1362,10 +1431,7 @@ function maybeHandleMaf(e){
 
   const freeText = ctx.beforeText || "";
   removeMafToken(ctx);
-
-  // Recolectamos URLs justo antes de abrir el panel
   const docUrls = collectUrlsHere();
-
   openMafPanel(freeText, ctx, docUrls);
   return true;
 }

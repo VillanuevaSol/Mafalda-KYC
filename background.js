@@ -1,6 +1,6 @@
 // background.js — VERSIÓN CORREGIDA (dynamic import, OCR/PDF, contador real + docMeta)
 
-/* Rutas de assets dentro del paquete */ 
+/* Rutas de assets dentro del paquete */
 const URLS = {
   pdfjs:      chrome.runtime.getURL("libs/pdf.min.js"),
   pdfWorker:  chrome.runtime.getURL("libs/pdf.worker.min.js"),
